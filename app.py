@@ -9,14 +9,27 @@ import google.generativeai as genai
 from datetime import datetime
 import pypdf
 
-# 1. الاتصال الامني والربط بقوقل درايف وجيمي عبر المفاتيح المسطحة المضمونة
+# 1. الاتصال الامني والربط بقوقل درايف وجيمي مع معالجة وتصفية المفتاح تلقائيا
 @st.cache_resource
 def init_services():
+    # سحب المفتاح الخام من الاسرار تنظيفه برمجيا من اي اخطاء في اللصق
+    raw_key = st.secrets["GCP_PRIVATE_KEY"]
+    
+    # حذف اي مسافات او سطور حقيقية ناتجة عن اللصق بالخطأ لتصفية النص تماما
+    flat_key = raw_key.replace("\n", "").replace("\r", "").replace(" ", "").replace("\xa0", "")
+    
+    # تحويل الرموز النصية \n الى اسطر حقيقية مجدولة يقبلها نظام التشفير
+    clean_key = flat_key.replace("\\n", "\n")
+    
+    # اعادة تثبيت الترويسة والنهاية بشكل قياسي مية بالمية
+    clean_key = clean_key.replace("-----BEGINPRIVATEKEY-----", "-----BEGIN PRIVATE KEY-----\n")
+    clean_key = clean_key.replace("-----ENDPRIVATEKEY-----", "\n-----END PRIVATE KEY-----")
+    
     sa_info = {
         "type": st.secrets["GCP_TYPE"],
         "project_id": st.secrets["GCP_PROJECT_ID"],
         "private_key_id": st.secrets["GCP_PRIVATE_KEY_ID"],
-        "private_key": st.secrets["GCP_PRIVATE_KEY"],
+        "private_key": clean_key,
         "client_email": st.secrets["GCP_CLIENT_EMAIL"],
         "client_id": st.secrets["GCP_CLIENT_ID"],
         "auth_uri": st.secrets["GCP_AUTH_URI"],
@@ -161,7 +174,7 @@ if user_input := st.chat_input("اكتب سؤالك او توجيهك هنا ي�
     # بناء التعليمات لـ جيمي
     system_instruction = f"""
     انت مستشار خبير وذكي واسمك جيمي. تتعامل مع القائد.
-    يجب ان تبني اجابتك بالكامل وبدقة متناهية بناء على اسس المشروع المذكورة in المصادر وبناء على سياق المحادثات المؤرشفة السابقة.
+    يجب ان تبني اجابتك بالكامل وبدقة متناهية بناء على اسس المشروع المذكورة في المصادر وبناء على سياق المحادثات المؤرشفة السابقة.
     اذا كانت هناك معلومات ناقصة، نبه القائد ولا تخمن ابدا.
     
     [مصادر المعرفة الصلبة للمشروع]:
