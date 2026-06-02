@@ -87,10 +87,13 @@ def process_interaction(prompt_content, is_audio=False):
                         "ai_payload": ai_reply
                     }
                     try:
-                        requests.post(webhook_url, json=payload, timeout=10)
+                        res = requests.post(webhook_url, json=payload, timeout=10)
+                        if res.status_code == 200:
+                            st.toast("🟢 تم ارسال البيانات للويب هوك بنجاح!")
+                        else:
+                            st.error(f"⚠️ منصة Make رفضت الاستلام. كود الاستجابة: {res.status_code}")
                     except Exception as e:
-                        # إظهار العطل الشبكي فورا على الشاشة لو فشل الارسال للويب هوك
-                        st.error(f"عطل شبكة الويب هوك: {e}")
+                        st.error(f"❌ عطل شبكة الويب هوك: {e}")
                         
             except Exception as e:
                 st.error(f"حدث خطأ اثناء التوليد: {e}")
