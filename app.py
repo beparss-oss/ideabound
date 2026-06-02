@@ -80,17 +80,17 @@ def process_interaction(prompt_content, is_audio=False):
                 st.markdown(ai_reply)
                 st.session_state.messages.append({"role": "assistant", "content": ai_reply})
                 
-                # طيران البيانات فورا لمنصة Make في الخلفية صامتا وبدون تأخير الشات
+                # طيران البيانات فورا لمنصة Make في الخلفية
                 if webhook_url:
                     payload = {
                         "user_payload": display_text,
                         "ai_payload": ai_reply
                     }
-                    # ارسال الصدمة الرقمية فورا مع وقت انتظار ممتد الى 10 ثواني لضمان المزامنة
                     try:
                         requests.post(webhook_url, json=payload, timeout=10)
-                    except Exception:
-                        pass # يمر صامتا حتى لو السيرفر الآخر مشغول لضمان استمرارية الشات
+                    except Exception as e:
+                        # إظهار العطل الشبكي فورا على الشاشة لو فشل الارسال للويب هوك
+                        st.error(f"عطل شبكة الويب هوك: {e}")
                         
             except Exception as e:
                 st.error(f"حدث خطأ اثناء التوليد: {e}")
