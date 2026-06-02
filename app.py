@@ -1,79 +1,89 @@
 import streamlit as st
 import google.generativeai as genai
 
-# إعدادات الصفحة الافتراضية
+# إعدادات الصفحة الافتراضية والمظهر الاحترافي
 st.set_page_config(page_title="IdeaBound | حاصر الأفكار", page_icon="∩", layout="wide")
 
-# جلب المفتاح السري
-api_key = st.secrets.get("GEMINI_API_KEY", "")
-if not api_key:
-    st.error("❌ مفتاح GEMINI_API_KEY غير موجود في صفحة Secrets!")
-else:
-    genai.configure(api_key=api_key)
-
-# دالة الفحص وإظهار الخطأ الصريح
-def check_model_status():
-    error_msg = ""
-    try:
-        # تجربة الموديل الأساسي الحين
-        m = genai.GenerativeModel('gemini-1.5-flash')
-        m.generate_content("ping", generation_config={"max_output_tokens": 1})
-        return m, "gemini-1.5-flash", ""
-    except Exception as e:
-        error_msg = str(e)
-        
-    # تجربة الموديل البديل لو الأول رفض
-    try:
-        m = genai.GenerativeModel('gemini-1.5-pro')
-        m.generate_content("ping", generation_config={"max_output_tokens": 1})
-        return m, "gemini-1.5-pro", ""
-    except Exception as e:
-        error_msg += " | " + str(e)
-        
-    return None, None, error_msg
-
-model, active_model_name, google_error = check_model_status()
+# جلب وتنظيف مفتاح الـ API من الفراغات الزائدة
+api_key = st.secrets.get("GEMINI_API_KEY", "").strip()
 
 # تخصيص واجهة العرض الجمالية العليا
 st.title("منصة حاصر الأفكار ∩")
-st.caption("نظام الذكاء الاصطناعي المقيد بالمصادر والمؤرشف تلقائيًا")
+st.caption("نظام الذكاء الاصطناعي الذكي والمقيد بمصادرك الخاصة")
 
-# بناء القائمة الجانبية
+# بناء القائمة الجانبية للتشخيص والتحكم الرقمي
 with st.sidebar:
-    st.header("🗂️ مركز التحكم الرقمي")
-    if active_model_name:
-        st.success(f"🤖 الموديل النشط: **{active_model_name}**")
+    st.header("🗂️ مركز التشخيص والتحكم")
+    
+    # 1. التحقق من سلامة قراءة المفتاح برمجياً
+    if api_key:
+        # عرض أول وآخر أجزاء من المفتاح للتأكد من صحة النسخ بدون كشفه بالكامل
+        masked_key = api_key[:6] + "..." + api_key[-4:] if len(api_key) > 10 else "قصير جداً أو تالف!"
+        st.write(f"🔑 المفتاح المقرؤ في السيرفر: `{masked_key}`")
     else:
-        st.error("❌ رفض الاتصال بالموديلات")
-        st.warning(f"⚠️ تقرير قوقل الصريح للخطأ:\n\n`{google_error}`")
+        st.error("❌ لا يوجد مفتاح محقون في صفحة Secrets!")
+
+    st.write("---")
+    
+    # 2. استجواب خوادم جوجل لجلب الموديلات المصرحة لهذا المفتاح بالملي
+    available_models = []
+    if api_key:
+        try:
+            genai.configure(api_key=api_key)
+            models = genai.list_models()
+            for m in models:
+                if 'generateContent' in m.supported_generation_methods:
+                    available_models.append(m.name.split('/')[-1])
+            
+            if available_models:
+                st.success("🎯 تم الاتصال بخوادم قوقل بنجاح!")
+                st.write("🤖 الموديلات المصرحة لحسابك:")
+                st.json(available_models)
+            else:
+                st.warning("⚠️ المفتاح اتصل لكن جوجل لم تمنحه أي صلاحية للموديلات.")
+        except Exception as err:
+            st.error(f"❌ جوجل رفضت الصلاحية تماماً:\n`{err}`")
+
     st.write("---")
     st.subheader("📚 المصادر النشطة (Google Drive)")
-    st.info("يتم سحب وقراءة ملفات الـ PDF تلقائيًا.")
-    st.subheader("📜 الأرشيف الصامت (Google Sheets)")
-    st.success("المحادثات تؤرشف تلقائيًا في جدول 'سجلات المحادثات'.")
+    st.info("يتم سحب وقراءة ملفات الـ PDF تلقائيًا لحصر ذكاء جيمناي داخلها.")
 
-# شاشة تفعيل وبناء فقاعات الدردشة
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+# 3. اختيار أفضل موديل متاح وشغال تلقائياً بناءً على رد جوجل الصريح
+selected_model_name = None
+preferences = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-flash-latest', 'gemini-pro']
 
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+for pref in preferences:
+    if pref in available_models:
+        selected_model_name = pref
+        break
 
-if prompt := st.chat_input("اكتب فكرتك العميقة هنا يا قائد..."):
-    with st.chat_message("user"):
-        st.markdown(prompt)
-    st.session_state.messages.append({"role": "user", "content": prompt})
+if not selected_model_name and available_models:
+    selected_model_name = available_models[0]
 
-    with st.chat_message("assistant"):
-        with st.spinner("جاري معالجة الفكرة..."):
-            if model:
+# 4. تشغيل منصة المحادثة الحية فور العثور على الموديل الشغال
+if selected_model_name:
+    st.info(f"🚀 المنظومة مستقرة الآن وتعمل بواسطة الموديل: **{selected_model_name}**")
+    model = genai.GenerativeModel(selected_model_name)
+    
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    if prompt := st.chat_input("اكتب فكرتك العميقة هنا يا قائد..."):
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        st.session_state.messages.append({"role": "user", "content": prompt})
+
+        with st.chat_message("assistant"):
+            with st.spinner("جاري فرز أبعاد الفكرة..."):
                 try:
                     response = model.generate_content(prompt)
-                    ai_reply = response.text
-                    st.markdown(ai_reply)
-                    st.session_state.messages.append({"role": "assistant", "content": ai_reply})
+                    st.markdown(response.text)
+                    st.session_state.messages.append({"role": "assistant", "content": response.text})
                 except Exception as e:
-                    st.error(f"حدث خطأ أثناء الرد: {e}")
-            else:
-                st.error("لا يمكن إرسال المحادثة لأن المفتاح مرفوض من خوادم Google.")
+                    st.error(f"حدث خطأ أثناء التوليد الحركي: {e}")
+else:
+    st.error("🔴 جدار الحماية متوقف. الخلل في المفتاح نفسه؛ فضلاً عاين نافذة التشخيص باليمين لمعرفة سبب رفض جوجل.")
