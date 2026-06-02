@@ -1,12 +1,15 @@
 import streamlit as st
 import google.generativeai as genai
 from streamlit_mic_recorder import mic_recorder
+import requests # مكتبة ارسال البيانات الفورية للخلفية
 
 # اعدادات الصفحة الافتراضية
 st.set_page_config(page_title="IdeaBound | حاصر الافكار", page_icon="∩", layout="wide")
 
-# جلب وتنظيف مفتاح الـ API
+# جلب وتنظيف مفاتيح العبور السرية
 api_key = st.secrets.get("GEMINI_API_KEY", "").strip()
+webhook_url = st.secrets.get("MAKE_WEBHOOK_URL", "").strip()
+
 if api_key:
     genai.configure(api_key=api_key)
 
@@ -15,7 +18,7 @@ model = genai.GenerativeModel('gemini-2.5-flash')
 
 # واجهة العرض العليا
 st.title("منصة حاصر الافكار ∩")
-st.caption("نظام الذكاء الاصطناعي الحي والمقيد بمصادرك - يدعم الصوت والكتابة")
+st.caption("نظام الذكاء الاصطناعي الحي والمقيد بمصادرك - يدعم الصوت والكتابة والارشفة")
 
 # بناء القائمة الجانبية الكلاسيكية
 with st.sidebar:
@@ -25,7 +28,10 @@ with st.sidebar:
     st.subheader("📚 المصادر النشطة (Google Drive)")
     st.info("يتم سحب وقراءة ملفات الـ PDF تلقائيا لحصر ذكاء جيمناي داخلها.")
     st.subheader("📜 الارشيف الصامت (Google Sheets)")
-    st.success("المحادثات تؤرشف تلقائيا في خلفية السستم.")
+    if webhook_url:
+        st.success("🔗 خط الارشفة الفورية متصل ومستعد")
+    else:
+        st.warning("⚠️ خط الارشفة بانتظار الرابط السري")
 
 # تفعيل وعرض فقاعات الدردشة التفاعلية
 if "messages" not in st.session_state:
@@ -42,14 +48,13 @@ with col1:
     user_text = st.chat_input("اكتب فكرتك العميقة هنا يا قائد...")
 
 with col2:
-    # زر الميكروفون التفاعلي للكمبيوتر والجوال
     audio_record = mic_recorder(
         start_prompt="🎙️ اضغط للتحدث",
         stop_prompt="🛑 ارسل الصوت",
         key='mic_picker'
     )
 
-# دالة معالجة وارسال البيانات لجيمناي
+# دالة معالجة وارسال البيانات لجيمناي والارشفة الفورية
 def process_interaction(prompt_content, is_audio=False):
     with st.chat_message("user"):
         if is_audio:
@@ -57,7 +62,6 @@ def process_interaction(prompt_content, is_audio=False):
         else:
             st.markdown(prompt_content)
     
-    # حفظ رسالة المستخدم في الجلسة
     display_text = prompt_content if not is_audio else "[رسالة صوتية حية]"
     st.session_state.messages.append({"role": "user", "content": display_text})
 
@@ -65,7 +69,6 @@ def process_interaction(prompt_content, is_audio=False):
         with st.spinner("جاري الاستماع وتحليل ابعاد الفكرة..."):
             try:
                 if is_audio:
-                    # ارسال ملف الصوت مباشرة لجيمناي ليفهمه نطقيا
                     response = model.generate_content([
                         {"mime_type": "audio/wav", "data": prompt_content},
                         "انت مساعد ذكي اسمه جيمي، حلل هذا التسجيل الصوتي بدقة واجب عليه باللهجة السعودية البيضاء السلسة وبدون اي حركات او تشكيل اعرابي نهائيا."
@@ -76,6 +79,19 @@ def process_interaction(prompt_content, is_audio=False):
                 ai_reply = response.text
                 st.markdown(ai_reply)
                 st.session_state.messages.append({"role": "assistant", "content": ai_reply})
+                
+                # طيران البيانات فورا لمنصة Make في الخلفية صامتا وبدون تأخير الشات
+                if webhook_url:
+                    payload = {
+                        "user_payload": display_text,
+                        "ai_payload": ai_reply
+                    }
+                    # ارسال الصدمة الرقمية فورا مع وقت انتظار ممتد الى 10 ثواني لضمان المزامنة
+                    try:
+                        requests.post(webhook_url, json=payload, timeout=10)
+                    except Exception:
+                        pass # يمر صامتا حتى لو السيرفر الآخر مشغول لضمان استمرارية الشات
+                        
             except Exception as e:
                 st.error(f"حدث خطأ اثناء التوليد: {e}")
 
