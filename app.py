@@ -9,10 +9,23 @@ import google.generativeai as genai
 from datetime import datetime
 import pypdf
 
-# 1. الاتصال الامني والربط بقوقل درايف وجيمي
+# 1. الاتصال الامني والربط بقوقل درايف وجيمي عبر المفاتيح المسطحة المضمونة
 @st.cache_resource
 def init_services():
-    sa_info = json.loads(st.secrets["DRIVE_SERVICE_ACCOUNT_JSON"])
+    # بناء القاموس برمجيا لتفادي اخطاء التنسيق في الاسرار
+    sa_info = {
+        "type": st.secrets["GCP_TYPE"],
+        "project_id": st.secrets["GCP_PROJECT_ID"],
+        "private_key_id": st.secrets["GCP_PRIVATE_KEY_ID"],
+        "private_key": st.secrets["GCP_PRIVATE_KEY"].replace('\\n', '\n'),
+        "client_email": st.secrets["GCP_CLIENT_EMAIL"],
+        "client_id": st.secrets["GCP_CLIENT_ID"],
+        "auth_uri": st.secrets["GCP_AUTH_URI"],
+        "token_uri": st.secrets["GCP_TOKEN_URI"],
+        "auth_provider_x509_cert_url": st.secrets["GCP_AUTH_PROVIDER_X509_CERT_URL"],
+        "client_x509_cert_url": st.secrets["GCP_CLIENT_X509_CERT_URL"],
+        "universe_domain": st.secrets["GCP_UNIVERSE_DOMAIN"]
+    }
     creds = service_account.Credentials.from_service_account_info(
         sa_info, scopes=["https://www.googleapis.com/auth/drive"]
     )
@@ -177,7 +190,7 @@ if user_input := st.chat_input("اكتب سؤالك او توجيهك هنا ي�
             st.write(response.text)
             st.session_state.messages.append({"role": "assistant", "content": response.text})
             
-            # --- خطوة الفوز: الارسال الفوري لـ الويب هوك الخاص بـ قوقل شيت ---
+            # الارسال الفوري لـ الويب هوك الخاص بـ قوقل شيت الحية
             payload = {
                 "user_payload": user_input,
                 "ai_payload": response.text
