@@ -1,76 +1,72 @@
 import streamlit as st
 import google.generativeai as genai
 
-# إعدادات الصفحة الافتراضية والمظهر الاحترافي
+# إعدادات الصفحة الافتراضية
 st.set_page_config(page_title="IdeaBound | حاصر الأفكار", page_icon="∩", layout="wide")
 
-# تفعيل نظام جيمناي وجلب المفتاح السري بأمان
-try:
-    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-except Exception as e:
-    st.error(f"خطأ في قراءة مفتاح الـ API: {e}")
+# جلب المفتاح السري
+api_key = st.secrets.get("GEMINI_API_KEY", "")
+if not api_key:
+    st.error("❌ مفتاح GEMINI_API_KEY غير موجود في صفحة Secrets!")
+else:
+    genai.configure(api_key=api_key)
 
-# دالة ذكية لتجربة الموديلات المتاحة تلقائيًا وتجنب خطأ 404
-@st.cache_resource
-def load_active_model():
-    # قائمة بأسماء الموديلات البديلة المتوافقة مع السيرفرات
-    test_models = ['gemini-1.5-flash', 'gemini-1.5-flash-latest', 'gemini-1.5-pro', 'gemini-pro']
-    for model_name in test_models:
-        try:
-            m = genai.GenerativeModel(model_name)
-            # تجربة وهمية سريعة جدا للتأكد من استجابة الموديل للصلاحيات
-            m.generate_content("ping", generation_config={"max_output_tokens": 1})
-            return m, model_name
-        except Exception:
-            continue
-    return None, None
+# دالة الفحص وإظهار الخطأ الصريح
+def check_model_status():
+    error_msg = ""
+    try:
+        # تجربة الموديل الأساسي الحين
+        m = genai.GenerativeModel('gemini-1.5-flash')
+        m.generate_content("ping", generation_config={"max_output_tokens": 1})
+        return m, "gemini-1.5-flash", ""
+    except Exception as e:
+        error_msg = str(e)
+        
+    # تجربة الموديل البديل لو الأول رفض
+    try:
+        m = genai.GenerativeModel('gemini-1.5-pro')
+        m.generate_content("ping", generation_config={"max_output_tokens": 1})
+        return m, "gemini-1.5-pro", ""
+    except Exception as e:
+        error_msg += " | " + str(e)
+        
+    return None, None, error_msg
 
-model, active_model_name = load_active_model()
+model, active_model_name, google_error = check_model_status()
 
 # تخصيص واجهة العرض الجمالية العليا
 st.title("منصة حاصر الأفكار ∩")
-st.caption("نظام الذكاء الاصطناعي المقيد بالمصادر والمؤرشف تلقائيًا في مساحتك الخاصة")
+st.caption("نظام الذكاء الاصطناعي المقيد بالمصادر والمؤرشف تلقائيًا")
 
-# بناء القائمة الجانبية الذكية لإدارة وعرض المصادر والأرشيف
+# بناء القائمة الجانبية
 with st.sidebar:
     st.header("🗂️ مركز التحكم الرقمي")
     if active_model_name:
-        st.success(f"🤖 الموديل النشط حاليًا: **{active_model_name}**")
+        st.success(f"🤖 الموديل النشط: **{active_model_name}**")
     else:
-        st.error("❌ لم يتم العثور على موديل نشط متوافق مع مفتاحك.")
+        st.error("❌ رفض الاتصال بالموديلات")
+        st.warning(f"⚠️ تقرير قوقل الصريح للخطأ:\n\n`{google_error}`")
     st.write("---")
     st.subheader("📚 المصادر النشطة (Google Drive)")
-    st.info("يتم سحب وقراءة ملفات الـ PDF والدراسات تلقائيًا لحصر ذكاء جيمناي داخلها.")
+    st.info("يتم سحب وقراءة ملفات الـ PDF تلقائيًا.")
     st.subheader("📜 الأرشيف الصامت (Google Sheets)")
-    st.success("المحادثات والتحليلات تؤرشف تلقائيًا في جدول 'سجلات المحادثات'.")
-    st.write("---")
-    
-    # زر تشخيصي ذكي ومساعد للقائد لقراءة صلاحيات حساب قوقل فورا
-    if st.button("🔍 تشخيص الموديلات المتاحة لمفتاحك"):
-        try:
-            models_list = [m.name.split('/')[-1] for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-            st.write("الموديلات المصرحة لك الحين:")
-            st.json(models_list)
-        except Exception as err:
-            st.error(f"تعذر جلب القائمة: {err}")
+    st.success("المحادثات تؤرشف تلقائيًا في جدول 'سجلات المحادثات'.")
 
-# شاشة تفعيل وبناء فقاعات الدردشة التفاعلية الحية
+# شاشة تفعيل وبناء فقاعات الدردشة
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# عرض الرسائل السابقة في الجلسة الحالية
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# مربع الإدخال السريع والمريح للكتابة أو التحدث من الجوال والكمبيوتر
 if prompt := st.chat_input("اكتب فكرتك العميقة هنا يا قائد..."):
     with st.chat_message("user"):
         st.markdown(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
 
     with st.chat_message("assistant"):
-        with st.spinner("جاري سحب المصادر وحصار أبعاد الفكرة الحية..."):
+        with st.spinner("جاري معالجة الفكرة..."):
             if model:
                 try:
                     response = model.generate_content(prompt)
@@ -78,6 +74,6 @@ if prompt := st.chat_input("اكتب فكرتك العميقة هنا يا قا�
                     st.markdown(ai_reply)
                     st.session_state.messages.append({"role": "assistant", "content": ai_reply})
                 except Exception as e:
-                    st.error(f"حدث خطأ أثناء معالجة النص: {e}")
+                    st.error(f"حدث خطأ أثناء الرد: {e}")
             else:
-                st.error("السيرفر لم يتمكن من الاتصال بأي موديل متاح. فضلاً اضغط على زر التشخيص في اليمين لمعاينة الصلاحيات.")
+                st.error("لا يمكن إرسال المحادثة لأن المفتاح مرفوض من خوادم Google.")
