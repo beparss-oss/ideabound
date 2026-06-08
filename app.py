@@ -15,19 +15,43 @@ import streamlit as st
 genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
 # ==========================================
-# 2. دالة تهيئة وتخزين محرك Google Drive القياسي (جدول TOML الأصلي)
+# 2. دالة تهيئة وتخزين محرك Google Drive القياسي 
 # ==========================================
 @st.cache_resource
 def init_drive_service():
-    """ تهيئة محرك Google Drive بالاعتماد على قاموس TOML الأصلي وتجاوز الـ JSON """
+    """ تهيئة محرك Google Drive مع التطهير الصارم والتقطيع السطري كل 64 محرفاً لجدول TOML """
     try:
-        # قراءة الاعتمادات مباشرة كقاموس بايثون من الأسرار بدون json.loads
+        # قراءة الاعتمادات مباشرة كقاموس بايثون من الأسرار
         creds_info = dict(st.secrets["gcp_service_account"])
+        raw_private_key = creds_info.get("private_key", "")
         
-        # معالجة محارف الهروب القياسية
-        if "private_key" in creds_info:
-            creds_info["private_key"] = creds_info["private_key"].replace("\\n", "\n")
-            
+        # معالجة محارف الهروب النصية وضمان نقاء السلسلة
+        clean_key = raw_private_key.replace("\\n", "\n")
+
+        # عزل متن التشفير الداخلي (Base64) عن الترويسات الهيكلية
+        if "-----BEGIN PRIVATE KEY-----" in clean_key and "-----END PRIVATE KEY-----" in clean_key:
+            core_key = clean_key.split("-----BEGIN PRIVATE KEY-----")[1].split("-----END PRIVATE KEY-----")[0]
+        else:
+            core_key = clean_key
+
+        # تنظيف المتن تماماً والإبقاء على محارف الـ Base64 الصافية وعلامات الـ Padding (=)
+        core_key_cleaned = re.sub(r"[^A-Za-z0-9\+\/\=]", "", core_key)
+
+        # إعادة تقسيم نص التشفير برمجياً إلى أسطر قياسية (طول كل منها 64 محرفاً) تبعاً لـ RFC 1421
+        formatted_core = ""
+        for i in range(0, len(core_key_cleaned), 64):
+            formatted_core += core_key_cleaned[i : i + 64] + "\n"
+
+        # إعادة البناء الهيكلي للمفتاح بالتوافق الصارم مع معايير مكتبة cryptography
+        standardized_private_key = (
+            "-----BEGIN PRIVATE KEY-----\n"
+            + formatted_core.strip()
+            + "\n-----END PRIVATE KEY-----\n"
+        )
+
+        # حقن المفتاح المطهر بأسطره المعزولة داخل الاعتمادات
+        creds_info["private_key"] = standardized_private_key
+        
         creds = service_account.Credentials.from_service_account_info(
             creds_info, scopes=["https://www.googleapis.com/auth/drive"]
         )
