@@ -1,51 +1,54 @@
 import io
 import json
-import re  # استيراد مكتبة التعبيرات النمطية لتطهير النص
-import requests
+import re
+import google.generativeai as genai
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-import google.generativeai as genai
+import requests
 import streamlit as st
 
+# ==========================================
+# 1. إعداد خدمات Gemini في النطاق العالمي (Global Scope)
+# ==========================================
+# تم إخراج الإعداد هنا لتجنب تجميد الموديول داخل الذاكرة المؤقتة لـ Streamlit
+genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
+
+# ==========================================
+# 2. دالة تهيئة وتخزين محرك Google Drive
+# ==========================================
 @st.cache_resource
-def init_services():
-    """تهيئة خدمات Google Drive API و Gemini API مع ضمان عزل محاذاة أسطر الـ PEM.
+def init_drive_service():
+    """تهيئة وتطهير محرك الوصول لـ Google Drive وعزله في الذاكرة المؤقتة.
 
-    تقوم الدالة بتطهير المتن التشفيري للمفتاح الخاص وإعادة بنائه مع وضع أسطر
-    جديدة حقيقية (\n) تعزل الترويسات عن علامات الـ Padding (=) لمنع التداخل.
+    تقوم الدالة بمعالجة المفتاح السري وإعادة هيكلته قياسياً لضمان توافقه
+    مع مكتبة التشفير، ثم بناء وإرجاع كائن الخدمة منفرداً.
     """
     try:
-        # 1. قراءة قالب الجيسون من أسرار Streamlit
+        # قراءة قالب الجيسون الموحد من الأسرار
         creds_info = json.loads(st.secrets["GCP_CREDENTIALS_JSON"])
-
-        # 2. استخراج المفتاح الخاص الخام وتطهير محارف الهروب النصية
         raw_private_key = creds_info.get("private_key", "")
+
+        # معالجة محارف الهروب النصية الناتجة عن التهيئة
         clean_key = raw_private_key.replace("\\n", "\n")
 
-        # 3. هندسة وعزل حدود ملف الـ PEM
+        # عزل وتطهير المتن التشفيري (Base64) وإعادة بناء ملف الـ PEM قياسياً
         if (
             "-----BEGIN PRIVATE KEY-----" in clean_key
             and "-----END PRIVATE KEY-----" in clean_key
         ):
-            # عزل النص التشفيري الداخلي (المتن) بعيداً عن الترويسات
             core_key = clean_key.split("-----BEGIN PRIVATE KEY-----")[
                 1
             ].split("-----END PRIVATE KEY-----")[0]
-
-            # تنظيف المتن تماماً: نبقي فقط على محارف Base64 والأرقام وعلامات (+ / =)
-            # نقوم بإزالة أي محارف مسافات أو سطور مشوهة قد تكون تسللت من المتصفح
+            # إبقاء محارف الـ Base64 وعلامات الـ Padding (=) فقط وحذف أي تشويه
             core_key_cleaned = re.sub(r"[^A-Za-z0-9\+\/\=]", "", core_key)
-
-            # إعادة بناء الهيكل البرمجي للمفتاح بالتزام صارم بمعايير PEM:
-            # نضمن وجود سطر جديد حقيقي (\n) بعد ترويسة البداية، وسطر جديد بعد متن التشفير (وعلامات الـ Padding)
             standardized_private_key = (
                 "-----BEGIN PRIVATE KEY-----\n"
                 + core_key_cleaned
                 + "\n-----END PRIVATE KEY-----\n"
             )
         else:
-            # آلية دفاعية احتياطية في حال تسلم المفتاح بدون ترويسات
+            # آلية دفاعية في حال غياب الترويسات الهيكلية
             core_key_cleaned = re.sub(r"[^A-Za-z0-9\+\/\=]", "", clean_key)
             standardized_private_key = (
                 "-----BEGIN PRIVATE KEY-----\n"
@@ -53,19 +56,16 @@ def init_services():
                 + "\n-----END PRIVATE KEY-----\n"
             )
 
-        # 4. حقن المفتاح الهيكلي المطهر داخل قاموس الاعتمادات
+        # حقن المفتاح المطهر بأسطره المعزولة داخل قاموس الاعتمادات
         creds_info["private_key"] = standardized_private_key
 
-        # 5. بناء الصلاحيات والربط السحابي
+        # بناء الصلاحيات السحابية لحساب الخدمة (GCP Service Account)
         creds = service_account.Credentials.from_service_account_info(
             creds_info, scopes=["https://www.googleapis.com/auth/drive"]
         )
 
-        # 6. تهيئة عملاء قوقل درايف وجميناي
-        drive_service = build("drive", "v3", credentials=creds)
-        genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-
-        return drive_service, genai
+        # بناء محرك قوقل درايف وإرجاعه ككائن صافي مخزن مؤقتاً
+        return build("drive", "v3", credentials=creds)
 
     except KeyError as e:
         st.error(f"خطأ في إعدادات الأسرار (Secrets): مفقود {str(e)}")
@@ -78,5 +78,8 @@ def init_services():
         raise e
 
 
-# تشغيل الخدمة لاستخراج الكائنات الجاهزة للتطبيق
-drive_service, genai_client = init_services()
+# ==========================================
+# 3. استدعاء وبدء تشغيل الخدمات
+# ==========================================
+# الآن أصبح drive_service جاهزاً للاستخدام، ومكتبة genai مُهيأة عالمياً بالكامل
+drive_service = init_drive_service()
