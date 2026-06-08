@@ -1,4 +1,5 @@
 import io
+import json
 import re
 from datetime import datetime
 import google.generativeai as genai
@@ -10,54 +11,44 @@ import requests
 import streamlit as st
 
 # ==========================================
-# 1. الإعدادات العالمية والتكوين الأساسي
+# 1. الإعدادات العالمية والتكوين الأساسي (Global Scope)
 # ==========================================
-# تهيئة مكتبة الذكاء الاصطناعي مرة واحدة لتجنب إعادة التحميل مع كل تحديث للصفحة
 genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
-
 # ==========================================
-# 2. دالة تهيئة وتخزين محرك Google Drive القياسي
+# 2. دالة تهيئة وتخزين محرك Google Drive القياسي (نسخة الـ Base64 الصافية)
 # ==========================================
 @st.cache_resource
 def init_drive_service():
-    """تهيئة محرك Google Drive مع التطهير الصارم والتقطيع السطري.
-    
-    تقوم هذه الدالة بقراءة المفتاح من الأسرار، وتنظيفه من أي شوائب نصية،
-    ثم إعادة بناءه بأسطر طولها 64 محرفاً ليطابق المعايير الأمنية الصارمة.
-    """
+    """ تهيئة محرك Google Drive عبر فك تشفير سطر الـ Base64 وتطهيره قياسياً كل 64 محرفاً """
     try:
-        # الخطوة الأولى: قراءة الاعتمادات مباشرة كقاموس بايثون من جدول الأسرار
+        # سحب الاعتمادات الصافية كقاموس من الأسرار
         creds_info = dict(st.secrets["gcp_service_account"])
         raw_private_key = creds_info.get("private_key", "")
         
-        # الخطوة الثانية: تحويل محارف الهروب النصية إلى أسطر حقيقية
+        # خط الدفاع البرمجي: تنظيف وتطهير محتوى الـ Base64 الصافي
         clean_key = raw_private_key.replace("\\n", "\n")
-
-        # الخطوة الثالثة: عزل متن التشفير الداخلي (Base64) عن الترويسات العلوية والسفلية
         if "-----BEGIN PRIVATE KEY-----" in clean_key and "-----END PRIVATE KEY-----" in clean_key:
             core_key = clean_key.split("-----BEGIN PRIVATE KEY-----")[1].split("-----END PRIVATE KEY-----")[0]
         else:
             core_key = clean_key
 
-        # الخطوة الرابعة: تنظيف المتن تماماً والإبقاء على الحروف والأرقام وعلامات التشفير فقط
+        # حظر المحارف البيضاء والإبقاء على نص الـ Base64 النقي
         core_key_cleaned = re.sub(r"[^A-Za-z0-9\+\/\=]", "", core_key)
 
-        # الخطوة الخامسة: تقسيم نص التشفير برمجياً إلى أسطر قياسية (طول كل منها 64 محرفاً)
+        # إعادة تشكيل وتقسيم الأسطر تلقائياً كل 64 محرفاً تبعاً لـ RFC 1421 الصارم لمكتبة الأمان
         formatted_core = ""
         for i in range(0, len(core_key_cleaned), 64):
             formatted_core += core_key_cleaned[i : i + 64] + "\n"
 
-        # الخطوة السادسة: إعادة تجميع المفتاح بشكله النهائي والصحيح
+        # حقن الهيكل البنائي الصحيح للـ PEM
         standardized_private_key = (
             "-----BEGIN PRIVATE KEY-----\n"
             + formatted_core.strip()
             + "\n-----END PRIVATE KEY-----\n"
         )
 
-        # الخطوة السابعة: تحديث القاموس بالمفتاح السليم وبناء الصلاحيات
         creds_info["private_key"] = standardized_private_key
-        
         creds = service_account.Credentials.from_service_account_info(
             creds_info, scopes=["https://www.googleapis.com/auth/drive"]
         )
@@ -67,21 +58,19 @@ def init_drive_service():
         st.error(f"خطأ في إعدادات الأسرار (Secrets): مفقود {str(e)}")
         raise e
     except ValueError as e:
-        st.error(f"فشل في تحميل ملف الـ PEM التشفيري: {str(e)}")
+        st.error(f"فشل في معالجة التشفير الأمني للمفتاح (PEM): {str(e)}")
         raise e
     except Exception as e:
-        st.error(f"خطأ غير متوقع أثناء تهيئة الخدمات: {str(e)}")
+        st.error(f"خطأ غير متوقع أثناء تهيئة الخدمات السحابية: {str(e)}")
         raise e
 
-# استدعاء وبدء تشغيل محرك قوقل درايف الصافي والمخزن مؤقتا
+# استدعاء محرك الوصول بسلام واستقرار في بيئة بايثون 3.12 النظيفة
 drive_service = init_drive_service()
 
-
 # ==========================================
-# 3. الميزات الديناميكية لإدارة الملفات والمشاريع
+# 3. الميزات الديناميكية لإدارة الملفات والمشاريع والأرشفة
 # ==========================================
 def find_or_create_folder(name, parent_id=None):
-    """البحث عن مجلد سحابي، وإنشاؤه إن لم يكن موجوداً."""
     query = f"mimeType = 'application/vnd.google-apps.folder' and name = '{name}' and trashed = false"
     if parent_id:
         query += f" and '{parent_id}' in parents"
@@ -96,13 +85,11 @@ def find_or_create_folder(name, parent_id=None):
     return folder.get("id")
 
 def list_projects(root_id):
-    """جلب قائمة المشاريع (المجلدات) الموجودة في مساحة العمل."""
     query = f"mimeType = 'application/vnd.google-apps.folder' and '{root_id}' in parents and trashed = false"
     results = drive_service.files().list(q=query, fields="files(id, name)").execute()
     return results.get("files", [])
 
 def get_sources_text(sources_id):
-    """استخراج النصوص من ملفات PDF لاستخدامها كمرجع للذكاء الاصطناعي."""
     query = f"'{sources_id}' in parents and mimeType = 'application/pdf' and trashed = false"
     results = drive_service.files().list(q=query, fields="files(id, name)").execute()
     files = results.get("files", [])
@@ -119,7 +106,6 @@ def get_sources_text(sources_id):
     return text_content
 
 def get_archive_text(archive_id):
-    """استرجاع المحادثات السابقة لتزويد الذكاء الاصطناعي بالسياق."""
     query = f"'{archive_id}' in parents and mimeType = 'text/plain' and trashed = false"
     results = drive_service.files().list(q=query, fields="files(id, name)").execute()
     files = results.get("files", [])
@@ -131,7 +117,6 @@ def get_archive_text(archive_id):
     return archive_content
 
 def archive_current_chat(archive_id, messages):
-    """حفظ المحادثة الحالية في ملف نصي على قوقل درايف."""
     if not messages:
         return
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -145,19 +130,15 @@ def archive_current_chat(archive_id, messages):
     media_body = MediaIoBaseUpload(media, mimeType="text/plain", resumable=True)
     drive_service.files().create(body=meta, media_body=media_body).execute()
 
-
 # ==========================================
 # 4. بناء واجهة المستخدم الرسومية (Streamlit UI)
 # ==========================================
 st.title("🧠 حاصر الأفكار - لوحة التحكم")
 
-# تهيئة المجلدات الأساسية
 root_folder_id = find_or_create_folder("Industrial_Mind_Workspace")
 st.sidebar.header("📁 إدارة المشاريع المتعددة")
 
-# قسم إضافة المشاريع
 new_project_name = st.sidebar.text_input("إضافة مشروع جديد:")
-
 if st.sidebar.button("إنشاء المشروع والمجلدات"):
     if new_project_name:
         p_id = find_or_create_folder(new_project_name, root_folder_id)
@@ -166,10 +147,8 @@ if st.sidebar.button("إنشاء المشروع والمجلدات"):
         st.sidebar.success(f"تم تجهيز قالب {new_project_name} بنجاح!")
         st.rerun()
 
-# قسم اختيار المشاريع
 projects = list_projects(root_folder_id)
 project_names = [p["name"] for p in projects]
-
 if not project_names:
     st.warning("الرجاء إنشاء مشروعك الأول من القائمة الجانبية للبدء.")
     st.stop()
@@ -179,52 +158,39 @@ current_project_id = [p["id"] for p in projects if p["name"] == selected_project
 sources_folder_id = find_or_create_folder("Sources", current_project_id)
 archive_folder_id = find_or_create_folder("Chat_Archive", current_project_id)
 
-# التحكم في الجلسة وتفريغها عند تغيير المشروع
 if "current_project" not in st.session_state or st.session_state.current_project != selected_project:
     st.session_state.current_project = selected_project
     st.session_state.messages = []
     st.session_state.user_turns = 0
 
-# عرض الرسائل المحفوظة في الجلسة
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.write(message["content"])
 
-# إدخال المستخدم ومعالجة الطلبات
 if user_input := st.chat_input("اكتب سؤالك أو توجيهك هنا يا قائد..."):
     st.session_state.messages.append({"role": "user", "content": user_input})
     st.session_state.user_turns += 1
-    
     with st.chat_message("user"):
         st.write(user_input)
-        
     with st.spinner("جاري قراءة المصادر والأرشيف التاريخي للمشروع..."):
         sources_context = get_sources_text(sources_folder_id)
         history_context = get_archive_text(archive_folder_id)
-        
     system_instruction = f"أنت مستشار خبير وذكي واسمك جيمي.\n[مصادر]:\n{sources_context}\n[أرشيف]:\n{history_context}"
-    
     with st.chat_message("assistant"):
         try:
             model = genai.GenerativeModel(model_name="gemini-1.5-pro", system_instruction=system_instruction)
             chat_history = []
             for m in st.session_state.messages[:-1]:
                 chat_history.append({"role": "user" if m["role"] == "user" else "model", "parts": [m["content"]]})
-                
             chat = model.start_chat(history=chat_history)
             response = chat.send_message(user_input)
-            
             st.write(response.text)
             st.session_state.messages.append({"role": "assistant", "content": response.text})
-            
-            # إرسال البيانات إلى Make Webhook
             payload = {"user_payload": user_input, "ai_payload": response.text}
             requests.post(st.secrets["MAKE_WEBHOOK_URL"], json=payload)
-            
         except Exception as e:
             st.error(f"حدث خطأ في الاتصال أو التوليد: {str(e)}")
 
-    # الأرشفة التلقائية بعد عدد معين من الرسائل
     if st.session_state.user_turns >= 10:
         with st.spinner("جاري الحفظ في أرشيف المجلد تلقائيا..."):
             archive_current_chat(archive_folder_id, st.session_state.messages)
