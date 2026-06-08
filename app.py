@@ -10,29 +10,29 @@ import streamlit as st
 # ==========================================
 # 1. إعداد خدمات Gemini في النطاق العالمي (Global Scope)
 # ==========================================
-# تم إخراج الإعداد هنا لتجنب تجميد الموديول داخل الذاكرة المؤقتة لـ Streamlit
+# تهيئة مكتبة جميناي لمرة واحدة عند الإقلاع خارج مريّع الموارد (Cache)
 genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
 
 # ==========================================
-# 2. دالة تهيئة وتخزين محرك Google Drive
+# 2. دالة تهيئة وتخزين محرك Google Drive الصارم
 # ==========================================
 @st.cache_resource
 def init_drive_service():
-    """تهيئة وتطهير محرك الوصول لـ Google Drive وعزله في الذاكرة المؤقتة.
+    """تهيئة محرك Google Drive مع إعادة هيكلة وتقسيم متن المفتاح الخاص قياسياً.
 
-    تقوم الدالة بمعالجة المفتاح السري وإعادة هيكلته قياسياً لضمان توافقه
-    مع مكتبة التشفير، ثم بناء وإرجاع كائن الخدمة منفرداً.
+    تقوم الدالة بتنظيف النص التشفيري، وتقسيمه إلى أسطر لا تتجاوز 64 محرفاً
+    تطابقاً مع بروتوكول RFC 1421 القياسي لملفات PEM، ثم بناء الاعتمادات.
     """
     try:
-        # قراءة قالب الجيسون الموحد من الأسرار
+        # قراءة قالب الجيسون الموحد من أسرار المنصة
         creds_info = json.loads(st.secrets["GCP_CREDENTIALS_JSON"])
         raw_private_key = creds_info.get("private_key", "")
 
-        # معالجة محارف الهروب النصية الناتجة عن التهيئة
+        # معالجة محارف الهروب النصية والتأكد من نقاء النص البرمجي
         clean_key = raw_private_key.replace("\\n", "\n")
 
-        # عزل وتطهير المتن التشفيري (Base64) وإعادة بناء ملف الـ PEM قياسياً
+        # عزل متن التشفير الداخلي (Base64) عن الترويسات لتنظيفه وتنسيقه
         if (
             "-----BEGIN PRIVATE KEY-----" in clean_key
             and "-----END PRIVATE KEY-----" in clean_key
@@ -40,31 +40,34 @@ def init_drive_service():
             core_key = clean_key.split("-----BEGIN PRIVATE KEY-----")[
                 1
             ].split("-----END PRIVATE KEY-----")[0]
-            # إبقاء محارف الـ Base64 وعلامات الـ Padding (=) فقط وحذف أي تشويه
-            core_key_cleaned = re.sub(r"[^A-Za-z0-9\+\/\=]", "", core_key)
-            standardized_private_key = (
-                "-----BEGIN PRIVATE KEY-----\n"
-                + core_key_cleaned
-                + "\n-----END PRIVATE KEY-----\n"
-            )
         else:
-            # آلية دفاعية في حال غياب الترويسات الهيكلية
-            core_key_cleaned = re.sub(r"[^A-Za-z0-9\+\/\=]", "", clean_key)
-            standardized_private_key = (
-                "-----BEGIN PRIVATE KEY-----\n"
-                + core_key_cleaned
-                + "\n-----END PRIVATE KEY-----\n"
-            )
+            core_key = clean_key
 
-        # حقن المفتاح المطهر بأسطره المعزولة داخل قاموس الاعتمادات
+        # خط الدفاع الأول: تطهير المتن تماماً والإبقاء على محارف الـ Base64 وعلامات (=) فقط
+        core_key_cleaned = re.sub(r"[^A-Za-z0-9\+\/\=]", "", core_key)
+
+        # خط الدفاع الثاني والحاسم: تقسيم نص الـ Base64 إلى أسطر قياسية (طول كل منها 64 محرفاً)
+        # هذا يمنع انهيار مكتبة التشفير بايثون بسبب السطور الطويلة غير القياسية
+        formatted_core = ""
+        for i in range(0, len(core_key_cleaned), 64):
+            formatted_core += core_key_cleaned[i : i + 64] + "\n"
+
+        # إعادة بناء ملف الـ PEM بالتطابق الهيكلي المطلق والمحاذاة التشفيرية المعتمدة
+        standardized_private_key = (
+            "-----BEGIN PRIVATE KEY-----\n"
+            + formatted_core.strip()
+            + "\n-----END PRIVATE KEY-----\n"
+        )
+
+        # حقن المفتاح الهيكلي المطور والمقسم برمجياً داخل قاموس الاعتمادات
         creds_info["private_key"] = standardized_private_key
 
-        # بناء الصلاحيات السحابية لحساب الخدمة (GCP Service Account)
+        # بناء الصلاحيات والربط السحابي الآمن بحساب الخدمة (GCP Service Account)
         creds = service_account.Credentials.from_service_account_info(
             creds_info, scopes=["https://www.googleapis.com/auth/drive"]
         )
 
-        # بناء محرك قوقل درايف وإرجاعه ككائن صافي مخزن مؤقتاً
+        # بناء محرك قوقل درايف وإرجاعه منفصلاً ككائن مخزن مؤقتاً
         return build("drive", "v3", credentials=creds)
 
     except KeyError as e:
@@ -79,7 +82,7 @@ def init_drive_service():
 
 
 # ==========================================
-# 3. استدعاء وبدء تشغيل الخدمات
+# 3. استدعاء الخدمة وبدء الإقلاع الفعلي
 # ==========================================
-# الآن أصبح drive_service جاهزاً للاستخدام، ومكتبة genai مُهيأة عالمياً بالكامل
+# استدعاء محرك قوقل درايف الصافي والمحمي بالـ Cache
 drive_service = init_drive_service()
