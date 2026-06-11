@@ -13,7 +13,7 @@ import streamlit as st
 # ==========================================
 # 1. الإعدادات العالمية والتكوين الأساسي (Global Scope)
 # ==========================================
-genai.configure(api_key=st.secrets["504284875727"])
+genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
 # ==========================================
 # 2. دالة تهيئة وتخزين محرك Google Drive القياسي (نسخة الـ Base64 الصافية)
