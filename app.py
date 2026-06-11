@@ -178,7 +178,7 @@ if user_input := st.chat_input("اكتب سؤالك أو توجيهك هنا ي�
     system_instruction = f"أنت مستشار خبير وذكي واسمك جيمي.\n[مصادر]:\n{sources_context}\n[أرشيف]:\n{history_context}"
     with st.chat_message("assistant"):
         try:
-            model = genai.GenerativeModel(model_name="gemini-1.5-pro", system_instruction=system_instruction)
+            model = genai.GenerativeModel(model_name="gemini-2.0-flash", ..., system_instruction=system_instruction)
             chat_history = []
             for m in st.session_state.messages[:-1]:
                 chat_history.append({"role": "user" if m["role"] == "user" else "model", "parts": [m["content"]]})
