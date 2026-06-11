@@ -142,7 +142,7 @@ def list_files_in_folder(folder_id):
 def upload_file_to_drive(file_bytes, filename, mimetype, parent_id):
     meta = {"name": filename, "parents": [parent_id]}
     media_stream = io.BytesIO(file_bytes)
-    media_body = MediaIoBaseUpload(media_stream, mimetype=mimetype, resumable=True)
+    media_body = MediaIoBaseUpload(media_stream, mimetype=mimetype, resumable=False)
     drive_service.files().create(body=meta, media_body=media_body).execute()
 
 def get_sources_text(sources_id):
@@ -196,7 +196,7 @@ def append_to_full_chat(full_chat_id, project_name, user_msg, ai_msg):
             existing = req.execute().decode("utf-8", errors="ignore")
             updated = existing + new_entry
             media_stream = io.BytesIO(updated.encode("utf-8"))
-            media_body = MediaIoBaseUpload(media_stream, mimetype="text/plain", resumable=True)
+            media_body = MediaIoBaseUpload(media_stream, mimetype="text/plain", resumable=False)
             drive_service.files().update(fileId=file_id, media_body=media_body).execute()
         except:
             # إنشاء ملف جديد إذا فشل التحديث
@@ -208,7 +208,7 @@ def append_to_full_chat(full_chat_id, project_name, user_msg, ai_msg):
         filename = f"محادثة_{timestamp}.txt"
         meta = {"name": filename, "parents": [full_chat_id], "mimeType": "text/plain"}
         media_stream = io.BytesIO(new_entry.encode("utf-8"))
-        media_body = MediaIoBaseUpload(media_stream, mimetype="text/plain", resumable=True)
+        media_body = MediaIoBaseUpload(media_stream, mimetype="text/plain", resumable=False)
         result = drive_service.files().create(body=meta, media_body=media_body).execute()
         st.session_state[session_key] = result.get("id")
 
@@ -217,7 +217,7 @@ def save_summary(archive_id, summary_text):
     filename = f"ملخص_{timestamp}.txt"
     meta = {"name": filename, "parents": [archive_id], "mimeType": "text/plain"}
     media_stream = io.BytesIO(summary_text.encode("utf-8"))
-    media_body = MediaIoBaseUpload(media_stream, mimetype="text/plain", resumable=True)
+    media_body = MediaIoBaseUpload(media_stream, mimetype="text/plain", resumable=False)
     drive_service.files().create(body=meta, media_body=media_body).execute()
 
 def generate_summary(messages):
