@@ -169,7 +169,7 @@ if user_input := st.chat_input("اكتب سؤالك أو توجيهك هنا ي�
                 role = "user" if m["role"] == "user" else "model"
                 chat_history.append({"role": role, "parts": [{"text": m["content"]}]})
             response = client.models.generate_content(
-                model="gemini-1.5-flash",
+                model="gemini-2.5-flash-lite",
                 contents=chat_history + [{"role": "user", "parts": [{"text": user_input}]}],
                 config={"system_instruction": system_instruction}
             )
