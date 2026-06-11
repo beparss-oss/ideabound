@@ -357,7 +357,7 @@ with st.sidebar:
 
     # عرض المحادثات الكاملة
     with st.expander("💬 المحادثات الكاملة"):
-        full_chats = list_files_in_folder(full_chat_folder_id)
+        #full_chats = list_files_in_folder(full_chat_folder_id)
         if full_chats:
             selected_chat = st.selectbox("اختر محادثة:", [c["name"] for c in full_chats], key="chat_select")
             if st.button("📖 عرض المحادثة"):
