@@ -344,12 +344,14 @@ with st.sidebar:
         if full_chat_folder_id:
             full_chats = list_files_in_folder(full_chat_folder_id)
             if full_chats:
-                selected_chat = st.selectbox("اختر محادثة:", [c["name"] for c in full_chats], key="chat_select")
+                chat_names = [c["name"] for c in full_chats]
+                selected_chat = st.selectbox("اختر محادثة:", chat_names, key="chat_select")
                 if st.button("📖 عرض المحادثة"):
-                    c_id = [c["id"] for c in full_chats if c["name"] == selected_chat][0]
-                    req = drive_service.files().get_media(fileId=c_id)
-                    content = req.execute().decode("utf-8", errors="ignore")
-                    st.text_area("المحادثة الكاملة:", content, height=300)
+                    matched = [c for c in full_chats if c["name"] == selected_chat]
+                    if matched:
+                        req = drive_service.files().get_media(fileId=matched[0]["id"])
+                        content = req.execute().decode("utf-8", errors="ignore")
+                        st.text_area("المحادثة الكاملة:", content, height=300)
             else:
                 st.info("لا توجد محادثات بعد")
         else:
