@@ -1,8 +1,7 @@
 import io
-import json
 import re
 from datetime import datetime
-import google.generativeai as genai
+import google.genai as genai
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
@@ -11,64 +10,51 @@ import requests
 import streamlit as st
 
 # ==========================================
-# 1. الإعدادات العالمية والتكوين الأساسي (Global Scope)
+# 1. الإعدادات العالمية والتكوين الأساسي
 # ==========================================
-genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
 
 # ==========================================
-# 2. دالة تهيئة وتخزين محرك Google Drive القياسي (نسخة الـ Base64 الصافية)
+# 2. دالة تهيئة محرك Google Drive
 # ==========================================
 @st.cache_resource
 def init_drive_service():
-    """ تهيئة محرك Google Drive عبر فك تشفير سطر الـ Base64 وتطهيره قياسياً كل 64 محرفاً """
     try:
-        # سحب الاعتمادات الصافية كقاموس من الأسرار
         creds_info = dict(st.secrets["gcp_service_account"])
         raw_private_key = creds_info.get("private_key", "")
-        
-        # خط الدفاع البرمجي: تنظيف وتطهير محتوى الـ Base64 الصافي
         clean_key = raw_private_key.replace("\\n", "\n")
         if "-----BEGIN PRIVATE KEY-----" in clean_key and "-----END PRIVATE KEY-----" in clean_key:
             core_key = clean_key.split("-----BEGIN PRIVATE KEY-----")[1].split("-----END PRIVATE KEY-----")[0]
         else:
             core_key = clean_key
-
-        # حظر المحارف البيضاء والإبقاء على نص الـ Base64 النقي
         core_key_cleaned = re.sub(r"[^A-Za-z0-9\+\/\=]", "", core_key)
-
-        # إعادة تشكيل وتقسيم الأسطر تلقائياً كل 64 محرفاً تبعاً لـ RFC 1421 الصارم لمكتبة الأمان
         formatted_core = ""
         for i in range(0, len(core_key_cleaned), 64):
             formatted_core += core_key_cleaned[i : i + 64] + "\n"
-
-        # حقن الهيكل البنائي الصحيح للـ PEM
         standardized_private_key = (
             "-----BEGIN PRIVATE KEY-----\n"
             + formatted_core.strip()
             + "\n-----END PRIVATE KEY-----\n"
         )
-
         creds_info["private_key"] = standardized_private_key
         creds = service_account.Credentials.from_service_account_info(
             creds_info, scopes=["https://www.googleapis.com/auth/drive"]
         )
         return build("drive", "v3", credentials=creds)
-
     except KeyError as e:
-        st.error(f"خطأ في إعدادات الأسرار (Secrets): مفقود {str(e)}")
+        st.error(f"خطأ في إعدادات الأسرار: مفقود {str(e)}")
         raise e
     except ValueError as e:
-        st.error(f"فشل في معالجة التشفير الأمني للمفتاح (PEM): {str(e)}")
+        st.error(f"فشل في معالجة المفتاح: {str(e)}")
         raise e
     except Exception as e:
-        st.error(f"خطأ غير متوقع أثناء تهيئة الخدمات السحابية: {str(e)}")
+        st.error(f"خطأ غير متوقع: {str(e)}")
         raise e
 
-# استدعاء محرك الوصول بسلام واستقرار في بيئة بايثون 3.12 النظيفة
 drive_service = init_drive_service()
 
 # ==========================================
-# 3. الميزات الديناميكية لإدارة الملفات والمشاريع والأرشفة
+# 3. دوال إدارة الملفات والمشاريع
 # ==========================================
 def find_or_create_folder(name, parent_id=None):
     query = f"mimeType = 'application/vnd.google-apps.folder' and name = '{name}' and trashed = false"
@@ -131,7 +117,7 @@ def archive_current_chat(archive_id, messages):
     drive_service.files().create(body=meta, media_body=media_body).execute()
 
 # ==========================================
-# 4. بناء واجهة المستخدم الرسومية (Streamlit UI)
+# 4. واجهة المستخدم
 # ==========================================
 st.title("🧠 حاصر الأفكار - لوحة التحكم")
 
@@ -172,27 +158,31 @@ if user_input := st.chat_input("اكتب سؤالك أو توجيهك هنا ي�
     st.session_state.user_turns += 1
     with st.chat_message("user"):
         st.write(user_input)
-    with st.spinner("جاري قراءة المصادر والأرشيف التاريخي للمشروع..."):
+    with st.spinner("جاري قراءة المصادر والأرشيف..."):
         sources_context = get_sources_text(sources_folder_id)
         history_context = get_archive_text(archive_folder_id)
     system_instruction = f"أنت مستشار خبير وذكي واسمك جيمي.\n[مصادر]:\n{sources_context}\n[أرشيف]:\n{history_context}"
     with st.chat_message("assistant"):
         try:
-            model = genai.GenerativeModel(model_name="gemini-2.0-flash", system_instruction=system_instruction)
             chat_history = []
             for m in st.session_state.messages[:-1]:
-                chat_history.append({"role": "user" if m["role"] == "user" else "model", "parts": [m["content"]]})
-            chat = model.start_chat(history=chat_history)
-            response = chat.send_message(user_input)
-            st.write(response.text)
-            st.session_state.messages.append({"role": "assistant", "content": response.text})
-            payload = {"user_payload": user_input, "ai_payload": response.text}
+                role = "user" if m["role"] == "user" else "model"
+                chat_history.append({"role": role, "parts": [{"text": m["content"]}]})
+            response = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=chat_history + [{"role": "user", "parts": [{"text": user_input}]}],
+                config={"system_instruction": system_instruction}
+            )
+            answer = response.text
+            st.write(answer)
+            st.session_state.messages.append({"role": "assistant", "content": answer})
+            payload = {"user_payload": user_input, "ai_payload": answer}
             requests.post(st.secrets["MAKE_WEBHOOK_URL"], json=payload)
         except Exception as e:
-            st.error(f"حدث خطأ في الاتصال أو التوليد: {str(e)}")
+            st.error(f"حدث خطأ: {str(e)}")
 
     if st.session_state.user_turns >= 10:
-        with st.spinner("جاري الحفظ في أرشيف المجلد تلقائيا..."):
+        with st.spinner("جاري الحفظ في الأرشيف..."):
             archive_current_chat(archive_folder_id, st.session_state.messages)
             st.session_state.messages = []
             st.session_state.user_turns = 0
