@@ -310,7 +310,7 @@ with st.sidebar:
     current_project_id = [p["id"] for p in projects if p["name"] == selected_project][0]
     sources_folder_id = find_or_create_folder("Sources", current_project_id)
     archive_folder_id = find_or_create_folder("Chat_Archive", current_project_id)
-    full_chat_folder_id = find_or_create_folder("Chat_Full", current_project_id)
+    # full_chat_folder_id = find_or_create_folder("Chat_Full", current_project_id)
 
     st.divider()
 
