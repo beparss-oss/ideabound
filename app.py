@@ -163,8 +163,9 @@ def append_to_session_file(folder_id, project_name, user_msg, ai_msg):
             media_stream = io.BytesIO(updated.encode("utf-8"))
             media_body = MediaIoBaseUpload(media_stream, mimetype="text/plain", resumable=False)
             drive_service.files().update(fileId=file_id, media_body=media_body).execute()
-        except:
+        except Exception as e:
             st.session_state[session_key] = None
+            st.error(f"⚠️ خطأ في تحديث ملف Chat_Full: {str(e)}")
     else:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"محادثة_{timestamp}.txt"
@@ -174,8 +175,9 @@ def append_to_session_file(folder_id, project_name, user_msg, ai_msg):
             media_body = MediaIoBaseUpload(media_stream, mimetype="text/plain", resumable=False)
             result = drive_service.files().create(body=meta, media_body=media_body, fields="id").execute()
             st.session_state[session_key] = result.get("id")
-        except:
-            pass
+            st.success(f"✅ تم إنشاء ملف جديد في Chat_Full: {filename}")
+        except Exception as e:
+            st.error(f"⚠️ خطأ في إنشاء ملف Chat_Full: {str(e)}")
 
 def generate_summary(messages):
     if not messages:
