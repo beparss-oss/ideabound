@@ -1,6 +1,6 @@
 import io
-import re
 from datetime import datetime
+import re
 import google.genai as genai
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -24,52 +24,26 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("""
-<script>
-window.addEventListener('load', function() {
-    window.speakText = function(text) {
-        window.speechSynthesis.cancel();
-        var utterance = new SpeechSynthesisUtterance(text);
-        utterance.lang = 'ar-SA';
-        utterance.rate = 0.9;
-        window.speechSynthesis.speak(utterance);
-    };
-    window.stopSpeak = function() {
-        window.speechSynthesis.cancel();
-    };
-    window.startVoice = function() {
-        var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        if (!SpeechRecognition) {
-            alert('استخدم Chrome للميكروفون');
-            return;
-        }
-        var recognition = new SpeechRecognition();
-        recognition.lang = 'ar-SA';
-        recognition.onresult = function(e) {
-            var text = e.results[0][0].transcript;
-            var inputs = window.parent.document.querySelectorAll('textarea');
-            for (var i = 0; i < inputs.length; i++) {
-                if (inputs[i].placeholder && inputs[i].placeholder.includes('اكتب')) {
-                    var setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
-                    setter.call(inputs[i], text);
-                    inputs[i].dispatchEvent(new Event('input', { bubbles: true }));
-                    break;
-                }
-            }
-        };
-        recognition.start();
-    };
-});
-</script>
-""", unsafe_allow_html=True)
+# ==========================================
+# 2. تحويل الأرقام إلى الأرقام الهندية (١٢٣٤٥٦٧٨٩٠)
+# ==========================================
+ARABIC_INDIC_DIGITS = "٠١٢٣٤٥٦٧٨٩"
+
+def to_indic_digits(text):
+    if not text:
+        return text
+    return re.sub(r'\d', lambda m: ARABIC_INDIC_DIGITS[int(m.group())], text)
 
 # ==========================================
-# 2. الإعدادات العالمية
+# 3. الإعدادات العالمية
 # ==========================================
 client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
 
+# ID مجلد IdeaBound الجديد (داخل حساب بيبرس - حل مشكلة صلاحيات الكتابة)
+ROOT_FOLDER_ID = "1Ltj1ou_2CYXsbpKlS0cbrXAZVzDqUloP"
+
 # ==========================================
-# 3. تهيئة Google Drive
+# 4. تهيئة Google Drive
 # ==========================================
 @st.cache_resource
 def init_drive_service():
@@ -102,34 +76,17 @@ def init_drive_service():
 drive_service = init_drive_service()
 
 # ==========================================
-# 4. دوال إدارة الملفات (إرسال فقط)
+# 5. دوال إدارة الملفات (إرسال فقط)
 # ==========================================
-def find_or_create_folder(name, parent_id=None):
-    query = f"mimeType='application/vnd.google-apps.folder' and name='{name}' and trashed=false"
-    if parent_id:
-        query += f" and '{parent_id}' in parents"
+def find_or_create_folder(name, parent_id):
+    query = f"mimeType='application/vnd.google-apps.folder' and name='{name}' and trashed=false and '{parent_id}' in parents"
     results = drive_service.files().list(q=query, fields="files(id,name)").execute()
     items = results.get("files", [])
     if items:
         return items[0]["id"]
-    meta = {"name": name, "mimeType": "application/vnd.google-apps.folder"}
-    if parent_id:
-        meta["parents"] = [parent_id]
+    meta = {"name": name, "mimeType": "application/vnd.google-apps.folder", "parents": [parent_id]}
     folder = drive_service.files().create(body=meta, fields="id").execute()
     return folder.get("id")
-
-def find_folder_only(name, parent_id=None):
-    query = f"mimeType='application/vnd.google-apps.folder' and name='{name}' and trashed=false"
-    if parent_id:
-        query += f" and '{parent_id}' in parents"
-    results = drive_service.files().list(q=query, fields="files(id,name)").execute()
-    items = results.get("files", [])
-    return items[0]["id"] if items else None
-
-def list_projects(root_id):
-    query = f"mimeType='application/vnd.google-apps.folder' and '{root_id}' in parents and trashed=false"
-    results = drive_service.files().list(q=query, fields="files(id,name)", orderBy="name").execute()
-    return results.get("files", [])
 
 def upload_file_to_drive(file_bytes, filename, mimetype, parent_id):
     try:
@@ -138,17 +95,39 @@ def upload_file_to_drive(file_bytes, filename, mimetype, parent_id):
         media_body = MediaIoBaseUpload(media_stream, mimetype=mimetype, resumable=False)
         drive_service.files().create(body=meta, media_body=media_body).execute()
         return True
-    except:
+    except Exception:
         return False
 
 def save_text_to_drive(folder_id, filename, text):
-    return upload_file_to_drive(text.encode("utf-8"), filename, "text/plain", folder_id)
+    try:
+        meta = {"name": filename, "parents": [folder_id], "mimeType": "text/plain"}
+        media_stream = io.BytesIO(text.encode("utf-8"))
+        media_body = MediaIoBaseUpload(media_stream, mimetype="text/plain", resumable=False)
+        drive_service.files().create(body=meta, media_body=media_body).execute()
+        return True
+    except Exception:
+        return False
 
-def append_to_session_file(folder_id, project_name, user_msg, ai_msg):
-    """يحفظ كل سؤال وجواب فوراً"""
+def get_latest_text_file(folder_id):
+    """يجيب أحدث ملف نصي من مجلد معين (لقراءة آخر جلسة/ملخص)"""
+    try:
+        query = f"'{folder_id}' in parents and trashed=false and mimeType='text/plain'"
+        results = drive_service.files().list(
+            q=query, fields="files(id,name,createdTime)", orderBy="createdTime desc", pageSize=1
+        ).execute()
+        items = results.get("files", [])
+        if not items:
+            return None, None
+        file_id = items[0]["id"]
+        content = drive_service.files().get_media(fileId=file_id).execute().decode("utf-8", errors="ignore")
+        return items[0]["name"], content
+    except Exception:
+        return None, None
+
+def append_to_session_file(folder_id, session_key, user_msg, ai_msg):
+    """يحفظ كل سؤال وجواب فوراً في ملف الجلسة الحالية"""
     if not folder_id:
         return
-    session_key = f"chat_file_{project_name}"
     new_entry = f"[{datetime.now().strftime('%H:%M:%S')}]\n"
     new_entry += f"أنت: {user_msg}\n\n"
     new_entry += f"جيمي: {ai_msg}\n\n"
@@ -165,33 +144,38 @@ def append_to_session_file(folder_id, project_name, user_msg, ai_msg):
             drive_service.files().update(fileId=file_id, media_body=media_body).execute()
         except Exception as e:
             st.session_state[session_key] = None
-            st.error(f"⚠️ خطأ في تحديث ملف Chat_Full: {str(e)}")
+            st.error(f"⚠️ خطأ في تحديث ملف الجلسة: {str(e)}")
     else:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"محادثة_{timestamp}.txt"
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        filename = f"جلسة_{timestamp}.txt"
+        header = f"=== بداية الجلسة: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ===\n\n"
         try:
             meta = {"name": filename, "parents": [folder_id], "mimeType": "text/plain"}
-            media_stream = io.BytesIO(new_entry.encode("utf-8"))
+            media_stream = io.BytesIO((header + new_entry).encode("utf-8"))
             media_body = MediaIoBaseUpload(media_stream, mimetype="text/plain", resumable=False)
             result = drive_service.files().create(body=meta, media_body=media_body, fields="id").execute()
             st.session_state[session_key] = result.get("id")
-            st.success(f"✅ تم إنشاء ملف جديد في Chat_Full: {filename}")
         except Exception as e:
-            st.error(f"⚠️ خطأ في إنشاء ملف Chat_Full: {str(e)}")
+            st.error(f"⚠️ خطأ في إنشاء ملف الجلسة: {str(e)}")
 
-def generate_summary(messages):
+def generate_summary(messages, partial=False):
     if not messages:
         return ""
     conversation = ""
     for m in messages:
         role = "المستخدم" if m["role"] == "user" else "جيمي"
         conversation += f"{role}: {m['content']}\n\n"
+
+    note = "ملاحظة: هذه جلسة قصيرة أو غير مكتملة، لخصها بما هو متوفر." if partial else ""
+
     prompt = f"""لخص هذه المحادثة في 5 إلى 7 أسطر فقط بهذا التنسيق:
 - الموضوع الرئيسي: ...
 - القرارات المتخذة: ...
 - المهام المتبقية: ...
 - آخر نقطة وصلنا إليها: ...
 - ملاحظات مهمة: ...
+
+{note}
 
 المحادثة:
 {conversation}"""
@@ -200,46 +184,37 @@ def generate_summary(messages):
             model="gemini-2.5-flash-lite",
             contents=[{"role": "user", "parts": [{"text": prompt}]}]
         )
-        return response.text
-    except:
+        return to_indic_digits(response.text)
+    except Exception:
         return conversation[:500]
 
+def parse_session_messages(text):
+    """يحول نص ملف الجلسة إلى قائمة رسائل لتغذية generate_summary"""
+    messages = []
+    blocks = text.split("=" * 40)
+    for block in blocks:
+        block = block.strip()
+        if not block:
+            continue
+        user_match = re.search(r"أنت:\s*(.+?)(?=\n\nجيمي:|\Z)", block, re.DOTALL)
+        ai_match = re.search(r"جيمي:\s*(.+)", block, re.DOTALL)
+        if user_match:
+            messages.append({"role": "user", "content": user_match.group(1).strip()})
+        if ai_match:
+            messages.append({"role": "assistant", "content": ai_match.group(1).strip()})
+    return messages
+
 # ==========================================
-# 5. بناء الواجهة
+# 6. بناء الواجهة
 # ==========================================
 st.title("🧠 حاصر الأفكار - لوحة التحكم")
 
-root_folder_id = find_or_create_folder("Industrial_Mind_Workspace")
+sources_folder_id = find_or_create_folder("Sources", ROOT_FOLDER_ID)
+archive_folder_id = find_or_create_folder("Chat_Archive", ROOT_FOLDER_ID)
+full_chat_folder_id = find_or_create_folder("Chat_Full", ROOT_FOLDER_ID)
 
 with st.sidebar:
-    st.header("📁 إدارة المشاريع")
-
-    with st.expander("➕ مشروع جديد"):
-        new_project_name = st.text_input("اسم المشروع:", key="new_proj")
-        if st.button("إنشاء المشروع"):
-            if new_project_name:
-                p_id = find_or_create_folder(new_project_name, root_folder_id)
-                find_or_create_folder("Sources", p_id)
-                find_or_create_folder("Chat_Archive", p_id)
-                st.success(f"✅ تم إنشاء {new_project_name}")
-                st.info("📌 أنشئ مجلد Chat_Full يدوياً في Drive وأضف drive-manager كـ Editor")
-                st.rerun()
-
-    st.divider()
-
-    projects = list_projects(root_folder_id)
-    project_names = [p["name"] for p in projects]
-    if not project_names:
-        st.warning("أنشئ مشروعك الأول أولاً")
-        st.stop()
-
-    selected_project = st.selectbox("📌 المشروع النشط:", project_names)
-    current_project_id = [p["id"] for p in projects if p["name"] == selected_project][0]
-    sources_folder_id = find_or_create_folder("Sources", current_project_id)
-    archive_folder_id = find_or_create_folder("Chat_Archive", current_project_id)
-    full_chat_folder_id = find_folder_only("Chat_Full", current_project_id)
-
-    st.divider()
+    st.header("📁 حاصر الأفكار")
 
     # رفع المصادر — إرسال فقط لـ Drive
     with st.expander("📤 رفع مصادر"):
@@ -257,9 +232,9 @@ with st.sidebar:
                 if upload_file_to_drive(file_bytes, uf.name, mime, sources_folder_id):
                     success_count += 1
             if success_count == len(uploaded_files):
-                st.success(f"✅ تم رفع {success_count} ملف إلى Sources")
+                st.success(f"✅ تم رفع {to_indic_digits(str(success_count))} ملف إلى Sources")
             elif success_count > 0:
-                st.warning(f"تم رفع {success_count} من {len(uploaded_files)}")
+                st.warning(f"تم رفع {to_indic_digits(str(success_count))} من {to_indic_digits(str(len(uploaded_files)))}")
             else:
                 st.error("فشل الرفع — تحقق من صلاحيات Sources في Drive")
 
@@ -272,63 +247,54 @@ with st.sidebar:
         st.markdown("[📁 افتح Drive لمراجعة الملخصات](https://drive.google.com)")
 
     with st.expander("💬 المحادثات الكاملة"):
-        st.caption("كل محادثة تُحفظ فوراً في مجلد Chat_Full داخل Drive")
+        st.caption("كل جلسة تُحفظ فوراً كملف مستقل في مجلد Chat_Full داخل Drive")
         st.markdown("[📁 افتح Drive لمراجعة المحادثات](https://drive.google.com)")
 
     st.divider()
 
-    st.markdown("### 🔄 تمديد المحادثة")
-    st.caption("عند الشعور بالهلوسة")
-    if st.button("🚀 تمديد المحادثة", type="primary"):
-        with st.spinner("جاري ضغط الذاكرة..."):
-            if st.session_state.get("messages"):
-                summary = generate_summary(st.session_state.messages)
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # زر آخر جلسة
+    if st.button("📂 آخر جلسة"):
+        name, content = get_latest_text_file(full_chat_folder_id)
+        if content:
+            st.session_state["show_last_session"] = content
+            st.session_state["show_last_session_name"] = name
+        else:
+            st.info("لا توجد جلسات سابقة محفوظة")
+
+# ==========================================
+# 7. تهيئة الجلسة + تلخيص تلقائي للجلسة السابقة
+# ==========================================
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+    st.session_state.user_turns = 0
+    st.session_state.session_file_key = "current_session_file"
+    st.session_state[st.session_state.session_file_key] = None
+
+    # عند بداية كل جلسة جديدة: لخص آخر جلسة سابقة محفوظة (إن وجدت ولم تُلخص)
+    last_name, last_content = get_latest_text_file(full_chat_folder_id)
+    if last_content:
+        prev_messages = parse_session_messages(last_content)
+        if prev_messages:
+            with st.spinner("جاري تلخيص الجلسة السابقة..."):
+                summary = generate_summary(prev_messages, partial=True)
+                timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
                 save_text_to_drive(archive_folder_id, f"ملخص_{timestamp}.txt", summary)
-            base_name = selected_project.split(" ")[0]
-            existing = [p["name"] for p in projects if p["name"].startswith(base_name)]
-            version = len([e for e in existing if e != base_name]) + 1
-            new_name = f"{base_name} 1.{version}"
-            new_p_id = find_or_create_folder(new_name, root_folder_id)
-            find_or_create_folder("Sources", new_p_id)
-            find_or_create_folder("Chat_Archive", new_p_id)
-            st.session_state.messages = []
-            st.session_state.user_turns = 0
-            st.session_state.current_project = new_name
-            st.success(f"✅ تم إنشاء {new_name}")
-            st.info("📌 أنشئ مجلد Chat_Full يدوياً للمشروع الجديد وأضف drive-manager")
+
+# عرض آخر جلسة إذا طُلبت
+if st.session_state.get("show_last_session"):
+    with st.expander("📂 آخر جلسة محفوظة", expanded=True):
+        st.text(st.session_state["show_last_session_name"])
+        st.text_area("المحتوى:", st.session_state["show_last_session"], height=300)
+        if st.button("إغلاق"):
+            del st.session_state["show_last_session"]
             st.rerun()
 
 # ==========================================
-# 6. منطقة المحادثة
+# 8. منطقة المحادثة
 # ==========================================
-if "current_project" not in st.session_state or st.session_state.current_project != selected_project:
-    st.session_state.current_project = selected_project
-    st.session_state.messages = []
-    st.session_state.user_turns = 0
-
-col1, col2 = st.columns([1, 1])
-with col1:
-    st.markdown("""<button onclick="startVoice()" 
-        style="background:#1f1f1f;border:1px solid #555;border-radius:8px;
-               padding:8px 15px;cursor:pointer;color:white;font-size:15px;">
-        🎤 تحدث</button>""", unsafe_allow_html=True)
-with col2:
-    st.markdown("""<button onclick="stopSpeak()" 
-        style="background:#1f1f1f;border:1px solid #555;border-radius:8px;
-               padding:8px 15px;cursor:pointer;color:white;font-size:15px;">
-        🔇 إيقاف</button>""", unsafe_allow_html=True)
-
-for message in st.session_state.get("messages", []):
+for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.write(message["content"])
-        if message["role"] == "assistant":
-            safe_text = message["content"].replace("'", " ").replace('"', ' ').replace("\n", " ")
-            st.markdown(
-                f'<button onclick="speakText(\'{safe_text}\')" '
-                f'style="background:none;border:1px solid #444;border-radius:5px;'
-                f'padding:3px 10px;cursor:pointer;color:#aaa;margin-top:5px;">🔊 استمع</button>',
-                unsafe_allow_html=True)
 
 if user_input := st.chat_input("اكتب سؤالك أو توجيهك هنا..."):
     st.session_state.messages.append({"role": "user", "content": user_input})
@@ -337,7 +303,10 @@ if user_input := st.chat_input("اكتب سؤالك أو توجيهك هنا..."
     with st.chat_message("user"):
         st.write(user_input)
 
-    system_instruction = "أنت مستشار خبير ذكي اسمك جيمي. تتحدث بالعربية دائماً."
+    system_instruction = (
+        "أنت مستشار خبير ذكي اسمك جيمي. تتحدث بالعربية دائماً. "
+        "اكتب جميع الأرقام في ردك باستخدام الأرقام الهندية (١٢٣٤٥٦٧٨٩٠) وليس الأرقام الإنجليزية (1234567890)."
+    )
 
     with st.chat_message("assistant"):
         try:
@@ -352,36 +321,23 @@ if user_input := st.chat_input("اكتب سؤالك أو توجيهك هنا..."
                 contents=chat_history + [{"role": "user", "parts": [{"text": user_input}]}],
                 config={"system_instruction": system_instruction}
             )
-            answer = response.text
+            answer = to_indic_digits(response.text)
             st.write(answer)
-
-            safe_text = answer.replace("'", " ").replace('"', ' ').replace("\n", " ")
-            st.markdown(
-                f'<button onclick="speakText(\'{safe_text}\')" '
-                f'style="background:none;border:1px solid #444;border-radius:5px;'
-                f'padding:3px 10px;cursor:pointer;color:#aaa;margin-top:5px;">🔊 استمع</button>',
-                unsafe_allow_html=True)
 
             st.session_state.messages.append({"role": "assistant", "content": answer})
 
-            if full_chat_folder_id:
-                append_to_session_file(full_chat_folder_id, selected_project, user_input, answer)
-            else:
-                st.warning("⚠️ مجلد Chat_Full غير موجود - أنشئه في Drive وأضف drive-manager كـ Editor")
+            append_to_session_file(full_chat_folder_id, st.session_state.session_file_key, user_input, answer)
 
         except Exception as e:
             st.error(f"حدث خطأ: {str(e)}")
 
-    # نظام النافذة المتحركة
+    # نظام النافذة المتحركة 20/10
     if st.session_state.user_turns >= 20:
         with st.spinner("جاري التلخيص التلقائي..."):
             old_messages = st.session_state.messages[:20]
             summary = generate_summary(old_messages)
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             save_text_to_drive(archive_folder_id, f"ملخص_{timestamp}.txt", summary)
             st.session_state.messages = st.session_state.messages[10:]
             st.session_state.user_turns = 10
-            key = f"chat_file_{selected_project}"
-            if key in st.session_state:
-                del st.session_state[key]
             st.rerun()
