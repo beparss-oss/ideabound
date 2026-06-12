@@ -5,7 +5,6 @@ import google.genai as genai
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
-import requests
 import streamlit as st
 
 # ==========================================
@@ -367,12 +366,6 @@ if user_input := st.chat_input("اكتب سؤالك أو توجيهك هنا..."
                 append_to_session_file(full_chat_folder_id, selected_project, user_input, answer)
             else:
                 st.warning("⚠️ مجلد Chat_Full غير موجود - أنشئه في Drive وأضف drive-manager كـ Editor")
-
-            try:
-                payload = {"user_payload": user_input, "ai_payload": answer}
-                requests.post(st.secrets["MAKE_WEBHOOK_URL"], json=payload, timeout=5)
-            except:
-                pass
 
         except Exception as e:
             st.error(f"حدث خطأ: {str(e)}")
