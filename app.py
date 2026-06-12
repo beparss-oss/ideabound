@@ -104,55 +104,42 @@ def save_text_to_drive(folder_id, filename, text):
     except Exception:
         return False
 
-def get_latest_text_file(folder_id):
-    """يجيب أحدث ملف نصي من مجلد معين (لقراءة آخر جلسة/ملخص)"""
-    try:
-        query = f"'{folder_id}' in parents and trashed=false and mimeType='text/plain'"
-        results = drive_service.files().list(
-            q=query, fields="files(id,name,createdTime)", orderBy="createdTime desc", pageSize=1
-        ).execute()
-        items = results.get("files", [])
-        if not items:
-            return None, None
-        file_id = items[0]["id"]
-        content = drive_service.files().get_media(fileId=file_id).execute().decode("utf-8", errors="ignore")
-        return items[0]["name"], content
-    except Exception:
-        return None, None
+def find_file_by_name(name, parent_id):
+    query = f"name='{name}' and trashed=false and '{parent_id}' in parents"
+    results = drive_service.files().list(q=query, fields="files(id,name,mimeType)").execute()
+    items = results.get("files", [])
+    return items[0] if items else None
 
-def append_to_session_file(folder_id, session_key, user_msg, ai_msg):
-    """يحفظ كل سؤال وجواب فوراً في ملف الجلسة الحالية"""
-    if not folder_id:
+def read_doc_text(file_id):
+    """يقرأ محتوى مستند Google Docs كنص عادي"""
+    try:
+        content = drive_service.files().export(fileId=file_id, mimeType="text/plain").execute()
+        return content.decode("utf-8", errors="ignore")
+    except Exception:
+        return ""
+
+def update_doc_text(file_id, text):
+    """يحدّث محتوى مستند Google Docs بالكامل بنص جديد"""
+    try:
+        media_stream = io.BytesIO(text.encode("utf-8"))
+        media_body = MediaIoBaseUpload(media_stream, mimetype="text/plain", resumable=False)
+        drive_service.files().update(fileId=file_id, media_body=media_body).execute()
+        return True
+    except Exception as e:
+        st.error(f"⚠️ خطأ في تحديث سجل المحادثات: {str(e)}")
+        return False
+
+def append_to_conversations_log(file_id, user_msg, ai_msg):
+    """يضيف سؤال وجواب جديد إلى نهاية سجل المحادثات (Conversations Log)"""
+    if not file_id:
         return
-    new_entry = f"[{datetime.now().strftime('%H:%M:%S')}]\n"
+    existing = read_doc_text(file_id)
+    new_entry = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]\n"
     new_entry += f"أنت: {user_msg}\n\n"
     new_entry += f"جيمي: {ai_msg}\n\n"
     new_entry += "=" * 40 + "\n\n"
-
-    if session_key in st.session_state and st.session_state[session_key]:
-        file_id = st.session_state[session_key]
-        try:
-            req = drive_service.files().get_media(fileId=file_id)
-            existing = req.execute().decode("utf-8", errors="ignore")
-            updated = existing + new_entry
-            media_stream = io.BytesIO(updated.encode("utf-8"))
-            media_body = MediaIoBaseUpload(media_stream, mimetype="text/plain", resumable=False)
-            drive_service.files().update(fileId=file_id, media_body=media_body).execute()
-        except Exception as e:
-            st.session_state[session_key] = None
-            st.error(f"⚠️ خطأ في تحديث ملف الجلسة: {str(e)}")
-    else:
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        filename = f"جلسة_{timestamp}.txt"
-        header = f"=== بداية الجلسة: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ===\n\n"
-        try:
-            meta = {"name": filename, "parents": [folder_id], "mimeType": "text/plain"}
-            media_stream = io.BytesIO((header + new_entry).encode("utf-8"))
-            media_body = MediaIoBaseUpload(media_stream, mimetype="text/plain", resumable=False)
-            result = drive_service.files().create(body=meta, media_body=media_body, fields="id").execute()
-            st.session_state[session_key] = result.get("id")
-        except Exception as e:
-            st.error(f"⚠️ خطأ في إنشاء ملف الجلسة: {str(e)}")
+    updated = existing + new_entry
+    update_doc_text(file_id, updated)
 
 def generate_summary(messages, partial=False):
     if not messages:
@@ -213,6 +200,12 @@ if not (sources_folder_id and archive_folder_id and full_chat_folder_id):
     st.error("⚠️ تأكد من وجود مجلدات Sources و Chat_Archive و Chat_Full داخل IdeaBound بنفس الأسماء بالضبط")
     st.stop()
 
+log_file = find_file_by_name("Conversations Log", full_chat_folder_id)
+if not log_file:
+    st.error("⚠️ لم يتم العثور على ملف 'Conversations Log' داخل مجلد Chat_Full")
+    st.stop()
+conversations_log_id = log_file["id"]
+
 with st.sidebar:
     st.header("📁 حاصر الأفكار")
 
@@ -254,12 +247,11 @@ with st.sidebar:
 
     # زر آخر جلسة
     if st.button("📂 آخر جلسة"):
-        name, content = get_latest_text_file(full_chat_folder_id)
-        if content:
+        content = read_doc_text(conversations_log_id)
+        if content.strip():
             st.session_state["show_last_session"] = content
-            st.session_state["show_last_session_name"] = name
         else:
-            st.info("لا توجد جلسات سابقة محفوظة")
+            st.info("لا توجد محادثات سابقة محفوظة")
 
 # ==========================================
 # 7. تهيئة الجلسة + تلخيص تلقائي للجلسة السابقة
@@ -267,23 +259,21 @@ with st.sidebar:
 if "messages" not in st.session_state:
     st.session_state.messages = []
     st.session_state.user_turns = 0
-    st.session_state.session_file_key = "current_session_file"
-    st.session_state[st.session_state.session_file_key] = None
 
-    # عند بداية كل جلسة جديدة: لخص آخر جلسة سابقة محفوظة (إن وجدت ولم تُلخص)
-    last_name, last_content = get_latest_text_file(full_chat_folder_id)
-    if last_content:
-        prev_messages = parse_session_messages(last_content)
-        if prev_messages:
-            with st.spinner("جاري تلخيص الجلسة السابقة..."):
-                summary = generate_summary(prev_messages, partial=True)
+    # عند بداية كل جلسة جديدة: لخص آخر محادثات في السجل (إن وجدت ولم تُلخص)
+    last_content = read_doc_text(conversations_log_id)
+    if last_content.strip():
+        recent_messages = parse_session_messages(last_content)
+        recent_messages = recent_messages[-20:]
+        if recent_messages:
+            with st.spinner("جاري تلخيص آخر المحادثات..."):
+                summary = generate_summary(recent_messages, partial=True)
                 timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
                 save_text_to_drive(archive_folder_id, f"ملخص_{timestamp}.txt", summary)
 
 # عرض آخر جلسة إذا طُلبت
 if st.session_state.get("show_last_session"):
-    with st.expander("📂 آخر جلسة محفوظة", expanded=True):
-        st.text(st.session_state["show_last_session_name"])
+    with st.expander("📂 آخر المحادثات المحفوظة", expanded=True):
         st.text_area("المحتوى:", st.session_state["show_last_session"], height=300)
         if st.button("إغلاق"):
             del st.session_state["show_last_session"]
@@ -326,7 +316,7 @@ if user_input := st.chat_input("اكتب سؤالك أو توجيهك هنا..."
 
             st.session_state.messages.append({"role": "assistant", "content": answer})
 
-            append_to_session_file(full_chat_folder_id, st.session_state.session_file_key, user_input, answer)
+            append_to_conversations_log(conversations_log_id, user_input, answer)
 
         except Exception as e:
             st.error(f"حدث خطأ: {str(e)}")
