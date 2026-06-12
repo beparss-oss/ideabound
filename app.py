@@ -78,15 +78,11 @@ drive_service = init_drive_service()
 # ==========================================
 # 5. دوال إدارة الملفات (إرسال فقط)
 # ==========================================
-def find_or_create_folder(name, parent_id):
+def find_folder_only(name, parent_id):
     query = f"mimeType='application/vnd.google-apps.folder' and name='{name}' and trashed=false and '{parent_id}' in parents"
     results = drive_service.files().list(q=query, fields="files(id,name)").execute()
     items = results.get("files", [])
-    if items:
-        return items[0]["id"]
-    meta = {"name": name, "mimeType": "application/vnd.google-apps.folder", "parents": [parent_id]}
-    folder = drive_service.files().create(body=meta, fields="id").execute()
-    return folder.get("id")
+    return items[0]["id"] if items else None
 
 def upload_file_to_drive(file_bytes, filename, mimetype, parent_id):
     try:
@@ -209,9 +205,13 @@ def parse_session_messages(text):
 # ==========================================
 st.title("🧠 حاصر الأفكار - لوحة التحكم")
 
-sources_folder_id = find_or_create_folder("Sources", ROOT_FOLDER_ID)
-archive_folder_id = find_or_create_folder("Chat_Archive", ROOT_FOLDER_ID)
-full_chat_folder_id = find_or_create_folder("Chat_Full", ROOT_FOLDER_ID)
+sources_folder_id = find_folder_only("Sources", ROOT_FOLDER_ID)
+archive_folder_id = find_folder_only("Chat_Archive", ROOT_FOLDER_ID)
+full_chat_folder_id = find_folder_only("Chat_Full", ROOT_FOLDER_ID)
+
+if not (sources_folder_id and archive_folder_id and full_chat_folder_id):
+    st.error("⚠️ تأكد من وجود مجلدات Sources و Chat_Archive و Chat_Full داخل IdeaBound بنفس الأسماء بالضبط")
+    st.stop()
 
 with st.sidebar:
     st.header("📁 حاصر الأفكار")
