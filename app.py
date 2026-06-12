@@ -5,7 +5,6 @@ import google.genai as genai
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
-import pypdf
 import requests
 import streamlit as st
 
@@ -104,7 +103,7 @@ def init_drive_service():
 drive_service = init_drive_service()
 
 # ==========================================
-# 4. دوال إدارة الملفات
+# 4. دوال إدارة الملفات (إرسال فقط)
 # ==========================================
 def find_or_create_folder(name, parent_id=None):
     query = f"mimeType='application/vnd.google-apps.folder' and name='{name}' and trashed=false"
@@ -121,7 +120,6 @@ def find_or_create_folder(name, parent_id=None):
     return folder.get("id")
 
 def find_folder_only(name, parent_id=None):
-    """يبحث فقط ولا ينشئ"""
     query = f"mimeType='application/vnd.google-apps.folder' and name='{name}' and trashed=false"
     if parent_id:
         query += f" and '{parent_id}' in parents"
@@ -134,57 +132,18 @@ def list_projects(root_id):
     results = drive_service.files().list(q=query, fields="files(id,name)", orderBy="name").execute()
     return results.get("files", [])
 
-def list_files_in_folder(folder_id):
-    if not folder_id:
-        return []
-    query = f"'{folder_id}' in parents and trashed=false"
-    results = drive_service.files().list(q=query, fields="files(id,name,mimeType,webViewLink)", orderBy="createdTime desc").execute()
-    return results.get("files", [])
-
-def get_sources_text(sources_id):
-    files = list_files_in_folder(sources_id)
-    text_content = ""
-    for f in files:
-        mime = f.get("mimeType", "")
-        if "image" in mime:
-            continue
-        text_content += f"\n--- مصدر: {f['name']} ---\n"
-        try:
-            req = drive_service.files().get_media(fileId=f["id"])
-            content = req.execute()
-            if "pdf" in mime:
-                stream = io.BytesIO(content)
-                reader = pypdf.PdfReader(stream)
-                for page in reader.pages:
-                    text_content += page.extract_text() + "\n"
-            else:
-                text_content += content.decode("utf-8", errors="ignore")
-        except:
-            pass
-    return text_content
-
-def get_archive_text(archive_id):
-    files = list_files_in_folder(archive_id)
-    archive_content = ""
-    for f in files:
-        try:
-            req = drive_service.files().get_media(fileId=f["id"])
-            content = req.execute().decode("utf-8", errors="ignore")
-            archive_content += f"\n--- ملخص: {f['name']} ---\n{content}\n"
-        except:
-            pass
-    return archive_content
-
-def save_text_to_drive(folder_id, filename, text):
-    """حفظ نص في Drive — يعمل فقط إذا كان المجلد مملوكاً لك"""
+def upload_file_to_drive(file_bytes, filename, mimetype, parent_id):
     try:
-        meta = {"name": filename, "parents": [folder_id], "mimeType": "text/plain"}
-        media_stream = io.BytesIO(text.encode("utf-8"))
-        media_body = MediaIoBaseUpload(media_stream, mimetype="text/plain", resumable=False)
+        meta = {"name": filename, "parents": [parent_id]}
+        media_stream = io.BytesIO(file_bytes)
+        media_body = MediaIoBaseUpload(media_stream, mimetype=mimetype, resumable=False)
         drive_service.files().create(body=meta, media_body=media_body).execute()
         return True
     except:
         return False
+
+def save_text_to_drive(folder_id, filename, text):
+    return upload_file_to_drive(text.encode("utf-8"), filename, "text/plain", folder_id)
 
 def append_to_session_file(folder_id, project_name, user_msg, ai_msg):
     """يحفظ كل سؤال وجواب فوراً"""
@@ -210,16 +169,14 @@ def append_to_session_file(folder_id, project_name, user_msg, ai_msg):
     else:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"محادثة_{timestamp}.txt"
-        result = save_text_to_drive(folder_id, filename, new_entry)
-        if result:
-            try:
-                query = f"'{folder_id}' in parents and name='{filename}' and trashed=false"
-                r = drive_service.files().list(q=query, fields="files(id)").execute()
-                items = r.get("files", [])
-                if items:
-                    st.session_state[session_key] = items[0]["id"]
-            except:
-                pass
+        try:
+            meta = {"name": filename, "parents": [folder_id], "mimeType": "text/plain"}
+            media_stream = io.BytesIO(new_entry.encode("utf-8"))
+            media_body = MediaIoBaseUpload(media_stream, mimetype="text/plain", resumable=False)
+            result = drive_service.files().create(body=meta, media_body=media_body, fields="id").execute()
+            st.session_state[session_key] = result.get("id")
+        except:
+            pass
 
 def generate_summary(messages):
     if not messages:
@@ -245,34 +202,6 @@ def generate_summary(messages):
         return response.text
     except:
         return conversation[:500]
-
-def generate_mega_summary(archive_id):
-    files = list_files_in_folder(archive_id)
-    all_summaries = ""
-    for f in files:
-        try:
-            req = drive_service.files().get_media(fileId=f["id"])
-            content = req.execute().decode("utf-8", errors="ignore")
-            all_summaries += f"\n{content}\n"
-        except:
-            pass
-    if not all_summaries:
-        return ""
-    prompt = f"""اكتب ملخصاً شاملاً ونهائياً في 10 أسطر فقط:
-- أهم المواضيع
-- أبرز القرارات
-- المهام المتبقية
-- السياق العام
-
-{all_summaries}"""
-    try:
-        response = client.models.generate_content(
-            model="gemini-2.5-flash-lite",
-            contents=[{"role": "user", "parts": [{"text": prompt}]}]
-        )
-        return response.text
-    except:
-        return all_summaries[:1000]
 
 # ==========================================
 # 5. بناء الواجهة
@@ -307,55 +236,43 @@ with st.sidebar:
     current_project_id = [p["id"] for p in projects if p["name"] == selected_project][0]
     sources_folder_id = find_or_create_folder("Sources", current_project_id)
     archive_folder_id = find_or_create_folder("Chat_Archive", current_project_id)
-    
-    # البحث عن Chat_Full بدون إنشاء
     full_chat_folder_id = find_folder_only("Chat_Full", current_project_id)
 
     st.divider()
 
-    # عرض المصادر فقط مع رابط Drive
-    with st.expander("📚 المصادر الموجودة"):
-        sources = list_files_in_folder(sources_folder_id)
-        if sources:
-            for s in sources:
-                link = s.get("webViewLink", "")
-                if link:
-                    st.markdown(f"📄 [{s['name']}]({link})")
-                else:
-                    st.write(f"📄 {s['name']}")
-        else:
-            st.info("أضف مصادرك يدوياً في Drive داخل مجلد Sources")
-
-    # عرض الملخصات
-    with st.expander("📋 ملخصات المحادثات"):
-        summaries = list_files_in_folder(archive_folder_id)
-        if summaries:
-            selected_summary = st.selectbox("اختر ملخصاً:", [s["name"] for s in summaries], key="sum_select")
-            if st.button("📖 عرض الملخص"):
-                s_id = [s["id"] for s in summaries if s["name"] == selected_summary][0]
-                req = drive_service.files().get_media(fileId=s_id)
-                content = req.execute().decode("utf-8", errors="ignore")
-                st.text_area("المحتوى:", content, height=200)
-        else:
-            st.info("لا توجد ملخصات بعد")
-
-    # عرض المحادثات الكاملة
-    with st.expander("💬 المحادثات الكاملة"):
-        if full_chat_folder_id:
-            full_chats = list_files_in_folder(full_chat_folder_id)
-            if full_chats:
-                chat_names = [c["name"] for c in full_chats]
-                selected_chat = st.selectbox("اختر محادثة:", chat_names, key="chat_select")
-                if st.button("📖 عرض المحادثة"):
-                    matched = [c for c in full_chats if c["name"] == selected_chat]
-                    if matched:
-                        req = drive_service.files().get_media(fileId=matched[0]["id"])
-                        content = req.execute().decode("utf-8", errors="ignore")
-                        st.text_area("المحادثة الكاملة:", content, height=300)
+    # رفع المصادر — إرسال فقط لـ Drive
+    with st.expander("📤 رفع مصادر"):
+        st.caption("أي ملف (PDF، صور، نصوص، Word) يُرفع مباشرة لمجلد Sources في Drive")
+        uploaded_files = st.file_uploader(
+            "ارفع ملفاتك:",
+            accept_multiple_files=True,
+            key="file_uploader"
+        )
+        if st.button("📤 رفع للمشروع") and uploaded_files:
+            success_count = 0
+            for uf in uploaded_files:
+                file_bytes = uf.read()
+                mime = uf.type or "application/octet-stream"
+                if upload_file_to_drive(file_bytes, uf.name, mime, sources_folder_id):
+                    success_count += 1
+            if success_count == len(uploaded_files):
+                st.success(f"✅ تم رفع {success_count} ملف إلى Sources")
+            elif success_count > 0:
+                st.warning(f"تم رفع {success_count} من {len(uploaded_files)}")
             else:
-                st.info("لا توجد محادثات بعد")
-        else:
-            st.warning("أنشئ مجلد Chat_Full في Drive وأضف drive-manager كـ Editor")
+                st.error("فشل الرفع — تحقق من صلاحيات Sources في Drive")
+
+    with st.expander("📚 المصادر"):
+        st.caption("راجع وأضف الملفات مباشرة من Google Drive")
+        st.markdown("[📁 افتح مجلد المصادر في Drive](https://drive.google.com)")
+
+    with st.expander("📋 ملخصات المحادثات"):
+        st.caption("تُحفظ تلقائياً في مجلد Chat_Archive داخل Drive")
+        st.markdown("[📁 افتح Drive لمراجعة الملخصات](https://drive.google.com)")
+
+    with st.expander("💬 المحادثات الكاملة"):
+        st.caption("كل محادثة تُحفظ فوراً في مجلد Chat_Full داخل Drive")
+        st.markdown("[📁 افتح Drive لمراجعة المحادثات](https://drive.google.com)")
 
     st.divider()
 
@@ -367,20 +284,18 @@ with st.sidebar:
                 summary = generate_summary(st.session_state.messages)
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 save_text_to_drive(archive_folder_id, f"ملخص_{timestamp}.txt", summary)
-            mega_summary = generate_mega_summary(archive_folder_id)
             base_name = selected_project.split(" ")[0]
             existing = [p["name"] for p in projects if p["name"].startswith(base_name)]
             version = len([e for e in existing if e != base_name]) + 1
             new_name = f"{base_name} 1.{version}"
             new_p_id = find_or_create_folder(new_name, root_folder_id)
             find_or_create_folder("Sources", new_p_id)
-            new_archive_id = find_or_create_folder("Chat_Archive", new_p_id)
-            if mega_summary:
-                save_text_to_drive(new_archive_id, "ملخص_شامل.txt", mega_summary)
+            find_or_create_folder("Chat_Archive", new_p_id)
             st.session_state.messages = []
             st.session_state.user_turns = 0
             st.session_state.current_project = new_name
             st.success(f"✅ تم إنشاء {new_name}")
+            st.info("📌 أنشئ مجلد Chat_Full يدوياً للمشروع الجديد وأضف drive-manager")
             st.rerun()
 
 # ==========================================
@@ -421,22 +336,10 @@ if user_input := st.chat_input("اكتب سؤالك أو توجيهك هنا..."
     with st.chat_message("user"):
         st.write(user_input)
 
-    with st.spinner("جاري القراءة والتفكير..."):
-        sources_context = get_sources_text(sources_folder_id)
-        history_context = get_archive_text(archive_folder_id)
-
-    system_instruction = f"""أنت مستشار خبير ذكي اسمك جيمي. تتحدث بالعربية دائماً.
-اقرأ المصادر والأرشيف قبل كل رد واستند إليهم.
-
-[المصادر]:
-{sources_context}
-
-[الأرشيف والذاكرة]:
-{history_context}"""
+    system_instruction = "أنت مستشار خبير ذكي اسمك جيمي. تتحدث بالعربية دائماً."
 
     with st.chat_message("assistant"):
         try:
-            # نافذة متحركة — احتفظ بآخر 20 رسالة فقط
             recent_messages = st.session_state.messages[-20:]
             chat_history = []
             for m in recent_messages[:-1]:
@@ -460,9 +363,10 @@ if user_input := st.chat_input("اكتب سؤالك أو توجيهك هنا..."
 
             st.session_state.messages.append({"role": "assistant", "content": answer})
 
-            # حفظ فوري في Chat_Full إذا المجلد موجود
             if full_chat_folder_id:
                 append_to_session_file(full_chat_folder_id, selected_project, user_input, answer)
+            else:
+                st.warning("⚠️ مجلد Chat_Full غير موجود - أنشئه في Drive وأضف drive-manager كـ Editor")
 
             try:
                 payload = {"user_payload": user_input, "ai_payload": answer}
@@ -473,15 +377,13 @@ if user_input := st.chat_input("اكتب سؤالك أو توجيهك هنا..."
         except Exception as e:
             st.error(f"حدث خطأ: {str(e)}")
 
-    # تلخيص كل 20 رسالة — يحذف العشر القديمة ويبقي العشر الجديدة
+    # نظام النافذة المتحركة
     if st.session_state.user_turns >= 20:
         with st.spinner("جاري التلخيص التلقائي..."):
-            # لخّص العشر القديمة
             old_messages = st.session_state.messages[:20]
             summary = generate_summary(old_messages)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             save_text_to_drive(archive_folder_id, f"ملخص_{timestamp}.txt", summary)
-            # احتفظ بالعشر الجديدة فقط
             st.session_state.messages = st.session_state.messages[10:]
             st.session_state.user_turns = 10
             key = f"chat_file_{selected_project}"
